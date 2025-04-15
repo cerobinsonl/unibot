@@ -8,14 +8,14 @@ import json
 import asyncio
 from typing import Dict, Any, Optional, List
 from contextlib import asynccontextmanager
-
+from utils.tracer import tracer
 # Import graph workflow
 from graph.workflow import create_workflow, AgentState
 from config import settings
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO if not os.getenv("AGENT_DEBUG", "false").lower() == "true" else logging.DEBUG,
+    level=logging.DEBUG,  # Set to DEBUG for maximum visibility
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler()]
 )
@@ -64,6 +64,8 @@ async def process_request(request_data: Dict[str, Any]):
         session_id = request_data.get("session_id")
         user_message = request_data.get("message")
         
+        logger.info(f"Processing request for session {session_id}: {user_message[:50]}...")
+        
         if not session_id or not user_message:
             raise HTTPException(status_code=400, detail="Missing session_id or message")
         
@@ -80,11 +82,17 @@ async def process_request(request_data: Dict[str, Any]):
         state = active_sessions[session_id]
         
         # Process the message through the workflow
-        result = await state.workflow.ainvoke({
+        logger.debug(f"Invoking workflow with message: {user_message[:50]}...")
+        initial_state = {
             "user_input": user_message,
             "session_id": session_id,
-            "history": state.history
-        })
+            "history": state.history,
+            "intermediate_steps": [],
+            "visualization": None
+        }
+        
+        result = await state.workflow.ainvoke(initial_state)
+        logger.debug(f"Workflow result keys: {list(result.keys())}")
         
         # Update history
         if state.history is None:
@@ -103,171 +111,51 @@ async def process_request(request_data: Dict[str, Any]):
             "session_id": session_id
         }
         
-        # Add visualization if present
-        if "visualization" in result and result["visualization"] is not None:
-            response["image_data"] = result["visualization"].get("image_data")
-            response["image_type"] = result["visualization"].get("image_type")
+        # Add visualization if present - with detailed logging
+        if "visualization" in result:
+            if result["visualization"] is not None:
+                logger.info(f"Found visualization in result: {result['visualization'].get('chart_type', 'unknown type')}")
+                logger.debug(f"Visualization data keys: {list(result['visualization'].keys())}")
+                response["visualization"] = result["visualization"]
+            else:
+                logger.info("Visualization key present but value is None")
+        else:
+            logger.info("No visualization key in result")
+            
+            # Check intermediate steps for visualization
+            if "intermediate_steps" in result:
+                for step in result["intermediate_steps"]:
+                    if step.get("agent") == "visualization_agent":
+                        logger.info("Found visualization step in intermediate_steps")
+                        if "output" in step and step["output"] != "Visualization created":
+                            logger.info("Visualization output found in intermediate steps")
+                            
+                            # Try to extract visualization data
+                            if isinstance(step["output"], dict) and "image_data" in step["output"]:
+                                logger.info("Found image_data in visualization step output")
+                                response["visualization"] = step["output"]
         
+        # For safety, ensure visualization is at the response level
+        vis_found = False
+        if "visualization" in response:
+            vis_found = True
+        
+        # If we didn't find a visualization but mentioned one in the response, create a dummy
+        if not vis_found and "visualization" in result.get("response", "").lower():
+            logger.warning("Visualization mentioned in response but no visualization data found!")
+        
+        logger.info(f"Final response keys: {list(response.keys())}")
+
+        # Near the end of the process_request function, before returning the response
+        try:
+            # Record final result in tracer
+            tracer_file = tracer.complete_trace(result)
+            logger.info(f"Agent trace saved to {tracer_file}")
+        except Exception as e:
+            logger.error(f"Error completing trace: {e}")
+
         return response
         
     except Exception as e:
         logger.error(f"Error processing request: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/ws/process")
-async def websocket_process(request_data: Dict[str, Any]):
-    """
-    Process a request from WebSocket
-    """
-    try:
-        # Similar to the process_request but formatted for WebSocket
-        session_id = request_data.get("session_id")
-        user_message = request_data.get("message")
-        
-        if not session_id or not user_message:
-            return {"type": "error", "message": "Missing session_id or message"}
-        
-        # Get or create workflow for this session
-        if session_id not in active_sessions:
-            logger.info(f"Creating new workflow for session {session_id}")
-            workflow = create_workflow()
-            active_sessions[session_id] = AgentState(
-                session_id=session_id,
-                workflow=workflow,
-                history=[]
-            )
-        
-        state = active_sessions[session_id]
-        
-        # Process the message through the workflow
-        result = await state.workflow.ainvoke({
-            "user_input": user_message,
-            "session_id": session_id,
-            "history": state.history
-        })
-        
-        # Update history
-        if state.history is None:
-            state.history = []
-            
-        state.history.append({"role": "user", "content": user_message})
-        state.history.append({"role": "assistant", "content": result.get("response", "")})
-        
-        # Truncate history if it gets too long
-        if len(state.history) > 20:
-            state.history = state.history[-20:]
-        
-        # Prepare WebSocket response
-        response = {
-            "message": result.get("response", ""),
-            "session_id": session_id
-        }
-        
-        # Add visualization if present
-        if "visualization" in result and result["visualization"] is not None:
-            response["image_data"] = result["visualization"].get("image_data")
-            response["image_type"] = result["visualization"].get("image_type")
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"Error processing WebSocket request: {e}", exc_info=True)
-        return {"type": "error", "message": str(e)}
-
-@app.post("/stream/process")
-async def stream_process(request_data: Dict[str, Any]):
-    """
-    Process a request with streaming response for long-running operations
-    """
-    async def generate_stream():
-        try:
-            session_id = request_data.get("session_id")
-            user_message = request_data.get("message")
-            
-            if not session_id or not user_message:
-                yield json.dumps({"type": "error", "message": "Missing session_id or message"}) + "\n"
-                return
-            
-            # Get or create workflow
-            if session_id not in active_sessions:
-                logger.info(f"Creating new workflow for session {session_id}")
-                workflow = create_workflow(streaming=True)  # Enable streaming mode
-                active_sessions[session_id] = AgentState(
-                    session_id=session_id,
-                    workflow=workflow,
-                    history=[]
-                )
-            
-            state = active_sessions[session_id]
-            
-            # Send initial status
-            yield json.dumps({
-                "type": "status",
-                "status": "processing",
-                "message": "Starting processing..."
-            }) + "\n"
-            
-            # Process with streaming
-            result_generator = state.workflow.astream({
-                "user_input": user_message,
-                "session_id": session_id,
-                "history": state.history,
-                "stream": True
-            })
-            
-            async for chunk in result_generator:
-                # Format and yield each chunk
-                yield json.dumps({
-                    "type": "chunk",
-                    "data": chunk
-                }) + "\n"
-                
-                # Brief pause to avoid overwhelming the connection
-                await asyncio.sleep(0.05)
-            
-            # Update history after streaming completes
-            if state.history is None:
-                state.history = []
-                
-            state.history.append({"role": "user", "content": user_message})
-            # We'll need to reconstruct the full response from chunks for history
-            # This would need to be implemented based on your specific chunk format
-            
-            # Send completion status
-            yield json.dumps({
-                "type": "status",
-                "status": "complete",
-                "message": "Processing complete"
-            }) + "\n"
-            
-        except Exception as e:
-            logger.error(f"Error in streaming: {e}", exc_info=True)
-            yield json.dumps({
-                "type": "error",
-                "message": str(e)
-            }) + "\n"
-    
-    return StreamingResponse(
-        generate_stream(),
-        media_type="application/x-ndjson"
-    )
-
-@app.delete("/session/{session_id}")
-async def end_session(session_id: str):
-    """
-    End a session and clean up resources
-    """
-    if session_id in active_sessions:
-        del active_sessions[session_id]
-        return {"status": "success", "message": "Session ended"}
-    else:
-        return {"status": "error", "message": "Session not found"}
-
-if __name__ == "__main__":
-    # Run the FastAPI app using Uvicorn
-    uvicorn.run(
-        "main:app", 
-        host="0.0.0.0",
-        port=8000,
-        reload=os.getenv("AGENT_DEBUG", "false").lower() == "true"
-    )

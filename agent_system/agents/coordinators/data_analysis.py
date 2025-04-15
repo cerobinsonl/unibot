@@ -109,9 +109,14 @@ Create a comprehensive response synthesizing all this information.
             user_input = state.get("user_input", "")
             intermediate_steps = state.get("intermediate_steps", [])
             
+            logger.info(f"Data Analysis Coordinator processing: '{user_input}'")
+            
             # Step 1: Create a plan for handling the request
             formatted_prompt = self.planning_prompt.format(user_input=user_input)
             planning_response = self.llm.invoke(formatted_prompt).content
+            
+            # Log the planning response
+            logger.debug(f"Planning response: {planning_response}")
             
             # Parse the planning response
             try:
@@ -138,6 +143,9 @@ Create a comprehensive response synthesizing all this information.
                     "needs_visualization": needs_visualization
                 }
             
+            # Log the plan
+            logger.info(f"Plan: {json.dumps(plan)}")
+            
             # Add planning step to intermediate steps
             intermediate_steps.append({
                 "agent": "data_analysis",
@@ -148,7 +156,14 @@ Create a comprehensive response synthesizing all this information.
             })
             
             # Step 2: Execute SQL query
+            logger.info(f"Executing SQL query: {plan['sql_task']}")
             sql_result = self.sql_agent(plan["sql_task"])
+            
+            # Log the query and results
+            if "query" in sql_result:
+                logger.info(f"SQL query: {sql_result['query']}")
+            
+            logger.info(f"SQL result row count: {sql_result.get('row_count', 0)}")
             
             # Add SQL step to intermediate steps
             intermediate_steps.append({
@@ -159,20 +174,21 @@ Create a comprehensive response synthesizing all this information.
                 "timestamp": self._get_timestamp()
             })
             
-            # Log SQL query results
-            logger.info(f"SQL query completed. Row count: {sql_result.get('row_count', 0)}")
-            
             # Check if there was an error with the SQL query
             if sql_result.get("is_error", False):
                 logger.warning(f"SQL query error: {sql_result.get('error', 'Unknown error')}")
                 return self._handle_sql_error(state, user_input, sql_result, intermediate_steps)
             
             # Step 3: Perform analysis
+            logger.info(f"Performing analysis: {plan['analysis_task']}")
             analysis_result = self.analysis_agent({
                 "task": plan["analysis_task"],
                 "data": sql_result["results"],
                 "column_names": sql_result["column_names"]
             })
+            
+            # Log the analysis summary
+            logger.info(f"Analysis summary: {analysis_result.get('summary', '')[:100]}...")
             
             # Add analysis step to intermediate steps
             intermediate_steps.append({
@@ -189,12 +205,17 @@ Create a comprehensive response synthesizing all this information.
             # Step 4: Create visualization if needed
             visualization_result = None
             if plan["needs_visualization"]:
+                logger.info(f"Creating visualization: {plan['visualization_task']}")
+                
                 visualization_result = self.visualization_agent({
                     "task": plan["visualization_task"],
                     "data": sql_result["results"],
                     "column_names": sql_result["column_names"],
                     "analysis": analysis_result
                 })
+                
+                # Log visualization creation result
+                logger.info(f"Visualization created: {visualization_result.get('chart_type', 'unknown type')}")
                 
                 # Add visualization step to intermediate steps
                 intermediate_steps.append({
@@ -210,6 +231,10 @@ Create a comprehensive response synthesizing all this information.
                 
                 # Add visualization to state
                 state["visualization"] = visualization_result
+                
+                # Log that we've added visualization to state
+                logger.info("Added visualization to state, image length: " + 
+                           (str(len(visualization_result.get("image_data", ""))) if visualization_result.get("image_data") else "0"))
             
             # Step 5: Synthesize results
             synthesis_input = {
@@ -221,12 +246,24 @@ Create a comprehensive response synthesizing all this information.
             }
             
             formatted_prompt = self.synthesis_prompt.format(**synthesis_input)
+            logger.info("Generating final synthesis response")
             response = self.llm.invoke(formatted_prompt).content
+            
+            # Log the synthesis response
+            logger.info(f"Synthesis response: {response[:100]}...")
             
             # Update state
             state["response"] = response
             state["intermediate_steps"] = intermediate_steps
             state["current_agent"] = "data_analysis"
+            
+            # Double-check visualization is in state if we created one
+            if visualization_result and "visualization" not in state:
+                logger.warning("Visualization was created but not found in state, adding it now")
+                state["visualization"] = visualization_result
+            
+            # Log final state
+            logger.info(f"Final state has visualization: {'visualization' in state and state['visualization'] is not None}")
             
             return state
             
@@ -245,6 +282,8 @@ Create a comprehensive response synthesizing all this information.
         
         error_message = sql_result.get("error", "Unknown database error")
         query_attempted = sql_result.get("query", "No query available")
+        
+        logger.warning(f"Handling SQL error: {error_message}")
         
         # Create an error response that's helpful to the user
         error_response = f"""

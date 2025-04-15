@@ -100,6 +100,13 @@ Please synthesize this information into a final response for the university staf
         intermediate_steps = state.get("intermediate_steps", [])
         visualization = state.get("visualization", None)
         
+        # Log the current state for debugging agent communication
+        logger.info(f"===== DIRECTOR AGENT STATE =====")
+        logger.info(f"User input: {user_input}")
+        logger.info(f"Current agent: {current_agent}")
+        logger.info(f"Has visualization: {visualization is not None}")
+        logger.info(f"Intermediate steps count: {len(intermediate_steps) if intermediate_steps else 0}")
+        
         # Initialize intermediate_steps if it's None
         if intermediate_steps is None:
             intermediate_steps = []
@@ -108,7 +115,7 @@ Please synthesize this information into a final response for the university staf
         # If we're coming from a coordinator, synthesize the final response
         if current_agent and current_agent != "director":
             # Log the flow
-            logger.info(f"Synthesizing final response from {current_agent} coordinator")
+            logger.info(f"===== SYNTHESIZING RESPONSE FROM {current_agent.upper()} =====")
             
             # Get the most recent intermediate step from the coordinator
             coordinator_responses = [
@@ -125,6 +132,9 @@ Please synthesize this information into a final response for the university staf
                     coordinator_response = json.dumps(last_response)
                 else:
                     coordinator_response = str(last_response)
+                
+                # Log the coordinator's response
+                logger.info(f"Coordinator response: {coordinator_response[:500]}...")
             
             # Look for retrieved data (especially from SQL queries)
             retrieved_data = "No specific data retrieved."
@@ -135,11 +145,45 @@ Please synthesize this information into a final response for the university staf
                         if sql_result["results"]:
                             # Get the first few results to include in the prompt
                             retrieved_data = json.dumps(sql_result["results"][:3], indent=2)
+                            # Log the retrieved data
+                            logger.info(f"Retrieved data: {retrieved_data}")
                         else:
                             retrieved_data = "Query executed successfully but returned no results."
             
             # Check if there's a visualization
             has_visualization = "Yes" if visualization else "No"
+            logger.info(f"Has visualization in state: {has_visualization}")
+            
+            # Log detailed intermediate steps for agent communication tracing
+            logger.info("===== INTERMEDIATE STEPS =====")
+            for i, step in enumerate(intermediate_steps):
+                agent = step.get("agent", "unknown")
+                action = step.get("action", "unknown")
+                timestamp = step.get("timestamp", "")
+                
+                # Format the input and output for readability
+                input_str = str(step.get("input", ""))
+                if len(input_str) > 200:
+                    input_str = input_str[:200] + "..."
+                
+                output = step.get("output", None)
+                output_str = "None"
+                if output:
+                    if isinstance(output, dict):
+                        if "results" in output:
+                            output_str = f"Results with {len(output['results'])} items"
+                        else:
+                            output_keys = list(output.keys())
+                            output_str = f"Dict with keys: {output_keys}"
+                    else:
+                        output_str = str(output)
+                        if len(output_str) > 200:
+                            output_str = output_str[:200] + "..."
+                
+                logger.info(f"Step {i+1}: {agent} -> {action}")
+                logger.info(f"  Input: {input_str}")
+                logger.info(f"  Output: {output_str}")
+                logger.info(f"  Time: {timestamp}")
             
             # Synthesize the final response
             formatted_history = self._format_history_for_prompt(history)
@@ -153,11 +197,16 @@ Please synthesize this information into a final response for the university staf
                 has_visualization=has_visualization
             )
             
+            # Log the synthesis prompt
+            logger.info("===== SYNTHESIS PROMPT =====")
+            logger.info(formatted_prompt[:500] + "...")
+            
             # Invoke the LLM with the formatted prompt
             response = self.llm.invoke(formatted_prompt).content
             
             # Log the synthesis result
-            logger.info(f"Synthesized response: {response[:100]}...")
+            logger.info(f"===== SYNTHESIZED RESPONSE =====")
+            logger.info(f"{response[:500]}...")
             
             # Update state
             state["response"] = response
@@ -167,11 +216,22 @@ Please synthesize this information into a final response for the university staf
         
         # Initial processing of user request
         try:
+            # Log that we're processing the initial request
+            logger.info(f"===== PROCESSING INITIAL REQUEST =====")
+            
             # Format the prompt with the user input
             formatted_prompt = self.intent_prompt.format(user_input=user_input)
             
+            # Log the intent prompt
+            logger.info("===== INTENT PROMPT =====")
+            logger.info(formatted_prompt[:500] + "...")
+            
             # Get director's analysis of the user request
             response = self.llm.invoke(formatted_prompt).content
+            
+            # Log the intent response
+            logger.info("===== INTENT RESPONSE =====")
+            logger.info(response[:500] + "...")
             
             # Update state
             state["response"] = response
@@ -187,6 +247,20 @@ Please synthesize this information into a final response for the university staf
             })
             
             state["intermediate_steps"] = intermediate_steps
+            
+            # Log the routing decision
+            if "ROUTE_TO_DATA_ANALYSIS" in response:
+                logger.info("Routing to DATA_ANALYSIS")
+            elif "ROUTE_TO_COMMUNICATION" in response:
+                logger.info("Routing to COMMUNICATION")
+            elif "ROUTE_TO_DATA_MANAGEMENT" in response:
+                logger.info("Routing to DATA_MANAGEMENT")
+            elif "ROUTE_TO_INTEGRATION" in response:
+                logger.info("Routing to INTEGRATION")
+            elif "FINAL_RESPONSE" in response:
+                logger.info("Providing FINAL_RESPONSE directly")
+            else:
+                logger.info("No clear routing found in response")
             
             return state
             

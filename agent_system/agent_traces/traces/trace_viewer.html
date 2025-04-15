@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Agent Communication Viewer</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            margin: 20px; 
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        .controls {
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 5px;
+        }
+        #traceSelect {
+            padding: 8px;
+            width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .summary {
+            background-color: #f0f7ff;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: white;
+            transition: background-color 0.2s;
+        }
+        .message:hover {
+            background-color: #f9f9f9;
+        }
+        .agent-name {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .action {
+            color: #3498db;
+        }
+        .timestamp {
+            color: #666;
+            font-size: 0.8em;
+            font-style: italic;
+        }
+        .visualization {
+            margin-top: 20px;
+            text-align: center;
+        }
+        .visualization img {
+            max-width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .tabs {
+            display: flex;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #ddd;
+        }
+        .tab {
+            padding: 10px 15px;
+            cursor: pointer;
+            background-color: #f5f5f5;
+            border: 1px solid #ddd;
+            border-bottom: none;
+            border-radius: 5px 5px 0 0;
+            margin-right: 5px;
+        }
+        .tab.active {
+            background-color: white;
+            border-bottom: 1px solid white;
+            margin-bottom: -1px;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .state-update {
+            background-color: #f9f9f9;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border-left: 4px solid #3498db;
+        }
+        .viz-present {
+            color: #27ae60;
+            font-weight: bold;
+        }
+        .viz-missing {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Agent Communication Viewer</h1>
+        <div class="controls">
+            <select id="traceSelect" onchange="loadTrace()">
+                <option value="">Select a trace file...</option>
+            </select>
+        </div>
+        
+        <div class="tabs">
+            <div class="tab active" onclick="showTab('summary-tab')">Summary</div>
+            <div class="tab" onclick="showTab('messages-tab')">Agent Interactions</div>
+            <div class="tab" onclick="showTab('states-tab')">State Updates</div>
+        </div>
+        
+        <div id="summary-tab" class="tab-content active">
+            <div id="summary" class="summary"></div>
+            <div id="visualization" class="visualization"></div>
+        </div>
+        
+        <div id="messages-tab" class="tab-content">
+            <h2>Agent Interactions</h2>
+            <div id="messages"></div>
+        </div>
+        
+        <div id="states-tab" class="tab-content">
+            <h2>State Updates</h2>
+            <div id="states"></div>
+        </div>
+    </div>
+    
+    <script>
+        // Function to load available trace files
+        async function loadTraceList() {
+            try {
+                const response = await fetch('list_traces.php');
+                const files = await response.json();
+                const select = document.getElementById('traceSelect');
+                
+                files.forEach(file => {
+                    const option = document.createElement('option');
+                    option.value = file;
+                    option.textContent = file;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Error loading trace list:', error);
+                document.getElementById('summary').innerHTML = `
+                    <p>Error loading trace files. Make sure the list_traces.php script is properly set up.</p>
+                    <p>Technical error: ${error.message}</p>
+                    <p>You can also drop a trace JSON file here to view it:</p>
+                    <input type="file" id="fileInput" accept=".json" onchange="handleFileSelect(event)">
+                `;
+            }
+        }
+        
+        // Function to handle file selection
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const trace = JSON.parse(e.target.result);
+                        displayTrace(trace);
+                    } catch (error) {
+                        console.error('Error parsing JSON:', error);
+                        document.getElementById('summary').innerHTML = `<p>Error parsing JSON file: ${error.message}</p>`;
+                    }
+                };
+                reader.readAsText(file);
+            }
+        }
+        
+        // Function to load and display a trace
+        async function loadTrace() {
+            const select = document.getElementById('traceSelect');
+            const fileName = select.value;
+            
+            if (!fileName) return;
+            
+            try {
+                const response = await fetch(`traces/${fileName}`);
+                const trace = await response.json();
+                displayTrace(trace);
+            } catch (error) {
+                console.error('Error loading trace:', error);
+                document.getElementById('summary').innerHTML = `<p>Error loading trace: ${error.message}</p>`;
+            }
+        }
+        
+        // Function to display a trace
+        function displayTrace(trace) {
+            // Display summary
+            const summary = document.getElementById('summary');
+            summary.innerHTML = `
+                <h2>Trace Summary</h2>
+                <p><strong>Start Time:</strong> ${trace.start_time || 'Unknown'}</p>
+                <p><strong>End Time:</strong> ${trace.end_time || 'Not completed'}</p>
+                <p><strong>Visualization Created:</strong> <span class="${trace.visualization_created ? 'viz-present' : 'viz-missing'}">${trace.visualization_created ? 'Yes' : 'No'}</span></p>
+                <p><strong>Agents Involved:</strong> ${Object.keys(trace.agents || {}).join(', ') || 'None recorded'}</p>
+            `;
+            
+            // Display visualization if present
+            const visualization = document.getElementById('visualization');
+            visualization.innerHTML = '';
+            
+            if (trace.final_state && trace.final_state.visualization_details && trace.final_state.visualization_details.has_image_data) {
+                visualization.innerHTML = `
+                    <h3>Visualization</h3>
+                    <p>Image data is present but cannot be displayed directly from the trace file.</p>
+                    <p><strong>Chart Type:</strong> ${trace.final_state.visualization_details.chart_type || 'Unknown'}</p>
+                    <p><strong>Image Type:</strong> ${trace.final_state.visualization_details.image_type || 'Unknown'}</p>
+                `;
+            }
+            
+            // Display messages
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.innerHTML = '';
+            
+            if (trace.messages && trace.messages.length > 0) {
+                trace.messages.forEach((msg, index) => {
+                    const msgDiv = document.createElement('div');
+                    msgDiv.className = 'message';
+                    
+                    msgDiv.innerHTML = `
+                        <span class="agent-name">${msg.agent || 'Unknown'}</span>
+                        <span class="action"> → ${msg.action || 'Unknown action'}</span>
+                        <span class="timestamp"> (${msg.timestamp || 'Unknown time'})</span>
+                    `;
+                    
+                    messagesDiv.appendChild(msgDiv);
+                });
+            } else {
+                messagesDiv.innerHTML = '<p>No agent interactions recorded in this trace.</p>';
+            }
+            
+            // Display state updates
+            const statesDiv = document.getElementById('states');
+            statesDiv.innerHTML = '';
+            
+            if (trace.state_updates && trace.state_updates.length > 0) {
+                trace.state_updates.forEach((state, index) => {
+                    const stateDiv = document.createElement('div');
+                    stateDiv.className = 'state-update';
+                    
+                    stateDiv.innerHTML = `
+                        <p><strong>Update ${index + 1}:</strong></p>
+                        <p>Current Agent: ${state.current_agent || 'None'}</p>
+                        <p>Has Visualization: <span class="${state.has_visualization ? 'viz-present' : 'viz-missing'}">${state.has_visualization ? 'Yes' : 'No'}</span></p>
+                        <p>Step Count: ${state.step_count || 0}</p>
+                        <p>Timestamp: ${state.timestamp || 'Unknown'}</p>
+                    `;
+                    
+                    statesDiv.appendChild(stateDiv);
+                });
+            } else {
+                statesDiv.innerHTML = '<p>No state updates recorded in this trace.</p>';
+            }
+        }
+        
+        // Function to switch tabs
+        function showTab(tabId) {
+            // Hide all tab contents
+            const tabContents = document.getElementsByClassName('tab-content');
+            for (let i = 0; i < tabContents.length; i++) {
+                tabContents[i].classList.remove('active');
+            }
+            
+            // Remove active class from all tabs
+            const tabs = document.getElementsByClassName('tab');
+            for (let i = 0; i < tabs.length; i++) {
+                tabs[i].classList.remove('active');
+            }
+            
+            // Show the selected tab content
+            document.getElementById(tabId).classList.add('active');
+            
+            // Add active class to the clicked tab
+            event.currentTarget.classList.add('active');
+        }
+        
+        // Initialize
+        loadTraceList();
+        
+        // Add file drop zone functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const container = document.querySelector('.container');
+            
+            container.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                container.style.backgroundColor = '#f0f7ff';
+            });
+            
+            container.addEventListener('dragleave', function() {
+                container.style.backgroundColor = 'white';
+            });
+            
+            container.addEventListener('drop', function(e) {
+                e.preventDefault();
+                container.style.backgroundColor = 'white';
+                
+                if (e.dataTransfer.files.length) {
+                    const file = e.dataTransfer.files[0];
+                    if (file.type === 'application/json') {
+                        const reader = new FileReader();
+                        reader.onload = function(event) {
+                            try {
+                                const trace = JSON.parse(event.target.result);
+                                displayTrace(trace);
+                            } catch (error) {
+                                console.error('Error parsing JSON:', error);
+                                document.getElementById('summary').innerHTML = `<p>Error parsing JSON file: ${error.message}</p>`;
+                            }
+                        };
+                        reader.readAsText(file);
+                    } else {
+                        alert('Please drop a JSON file');
+                    }
+                }
+            });
+            
+            // Add file input as fallback
+            const fileInputContainer = document.createElement('div');
+            fileInputContainer.innerHTML = `
+                <p>Or select a trace file from your computer:</p>
+                <input type="file" id="fileInput" accept=".json" style="margin-top: 10px;">
+            `;
+            document.getElementById('summary').appendChild(fileInputContainer);
+            
+            document.getElementById('fileInput').addEventListener('change', handleFileSelect);
+        });
+    </script>
+</body>
+</html>

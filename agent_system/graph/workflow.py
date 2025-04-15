@@ -15,6 +15,12 @@ from agents.coordinators.communication import CommunicationCoordinator
 from agents.coordinators.data_management import DataManagementCoordinator
 from agents.coordinators.integration import IntegrationCoordinator
 
+# Import observer for monitoring
+from utils.graph_observer import LangGraphObserver
+
+# Import agent tracer
+from utils.tracer import tracer
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -57,12 +63,111 @@ def create_workflow(streaming: bool = False) -> StateGraph:
     # Define the workflow graph
     workflow = StateGraph(GraphState)
     
+    # Define custom data_analysis function that ensures visualization is preserved
+    def data_analysis_with_preservation(state: GraphState) -> GraphState:
+        """Run data analysis and ensure visualization is preserved"""
+        # Log that we're running this custom function
+        logger.info("Running data analysis with visualization preservation")
+        
+        # Record in tracer
+        tracer.record_agent_activity("data_analysis", "start", state.get("user_input", ""), None)
+        
+        # Run the normal data analysis coordinator
+        result_state = data_analysis_coordinator(state)
+        
+        # Ensure the state indicates we're in data_analysis mode
+        result_state["current_agent"] = "data_analysis"
+        
+        # Log visualization status for debugging
+        if "visualization" in result_state and result_state["visualization"] is not None:
+            logger.info("Found visualization in data analysis result, preserving for final response")
+            # Record visualization creation in tracer
+            tracer.record_agent_activity("data_analysis", "create_visualization", 
+                                         result_state.get("user_input", ""), 
+                                         {"has_visualization": True})
+        
+        # Record state update in tracer
+        tracer.record_state_update(result_state)
+        
+        # Record completion in tracer
+        tracer.record_agent_activity("data_analysis", "complete", state.get("user_input", ""), result_state)
+        
+        return result_state
+    
+    # Custom wrapper for director agent
+    def director_with_tracing(state: GraphState) -> GraphState:
+        """Run director agent with tracing"""
+        # Record in tracer
+        tracer.record_agent_activity("director", "start", state.get("user_input", ""), None)
+        
+        # Run the director agent
+        result_state = director_agent(state)
+        
+        # Record state update in tracer
+        tracer.record_state_update(result_state)
+        
+        # Record completion in tracer
+        tracer.record_agent_activity("director", "complete", state.get("user_input", ""), result_state)
+        
+        return result_state
+    
+    # Custom wrapper for communication coordinator
+    def communication_with_tracing(state: GraphState) -> GraphState:
+        """Run communication coordinator with tracing"""
+        # Record in tracer
+        tracer.record_agent_activity("communication", "start", state.get("user_input", ""), None)
+        
+        # Run the communication coordinator
+        result_state = communication_coordinator(state)
+        
+        # Record state update in tracer
+        tracer.record_state_update(result_state)
+        
+        # Record completion in tracer
+        tracer.record_agent_activity("communication", "complete", state.get("user_input", ""), result_state)
+        
+        return result_state
+    
+    # Custom wrapper for data management coordinator
+    def data_management_with_tracing(state: GraphState) -> GraphState:
+        """Run data management coordinator with tracing"""
+        # Record in tracer
+        tracer.record_agent_activity("data_management", "start", state.get("user_input", ""), None)
+        
+        # Run the data management coordinator
+        result_state = data_management_coordinator(state)
+        
+        # Record state update in tracer
+        tracer.record_state_update(result_state)
+        
+        # Record completion in tracer
+        tracer.record_agent_activity("data_management", "complete", state.get("user_input", ""), result_state)
+        
+        return result_state
+    
+    # Custom wrapper for integration coordinator
+    def integration_with_tracing(state: GraphState) -> GraphState:
+        """Run integration coordinator with tracing"""
+        # Record in tracer
+        tracer.record_agent_activity("integration", "start", state.get("user_input", ""), None)
+        
+        # Run the integration coordinator
+        result_state = integration_coordinator(state)
+        
+        # Record state update in tracer
+        tracer.record_state_update(result_state)
+        
+        # Record completion in tracer
+        tracer.record_agent_activity("integration", "complete", state.get("user_input", ""), result_state)
+        
+        return result_state
+    
     # Add nodes to the graph
-    workflow.add_node("director", director_agent)
-    workflow.add_node("data_analysis", data_analysis_coordinator)
-    workflow.add_node("communication", communication_coordinator)
-    workflow.add_node("data_management", data_management_coordinator)
-    workflow.add_node("integration", integration_coordinator)
+    workflow.add_node("director", director_with_tracing)
+    workflow.add_node("data_analysis", data_analysis_with_preservation)
+    workflow.add_node("communication", communication_with_tracing)
+    workflow.add_node("data_management", data_management_with_tracing)
+    workflow.add_node("integration", integration_with_tracing)
     
     # Define the director's routing logic
     def route_request(state: GraphState) -> str:
@@ -86,23 +191,32 @@ def create_workflow(streaming: bool = False) -> StateGraph:
         
         try:
             # Attempt to parse routing information from director response
+            route_result = None
+            
             if "ROUTE_TO_DATA_ANALYSIS" in response:
-                return "data_analysis"
+                route_result = "data_analysis"
             elif "ROUTE_TO_COMMUNICATION" in response:
-                return "communication"
+                route_result = "communication"
             elif "ROUTE_TO_DATA_MANAGEMENT" in response:
-                return "data_management"
+                route_result = "data_management"
             elif "ROUTE_TO_INTEGRATION" in response:
-                return "integration"
+                route_result = "integration"
             elif "FINAL_RESPONSE" in response:
-                return END
+                route_result = END
             else:
                 # Default to data analysis for now as it's most common
-                # In production, should log this as a potential issue
                 logger.warning(f"No clear routing found in: {response[:100]}...")
-                return "data_analysis"
+                route_result = "data_analysis"
+            
+            # Record routing decision in tracer
+            tracer.record_agent_activity("router", "route", response[:100], {"route_to": route_result})
+            
+            return route_result
+            
         except Exception as e:
             logger.error(f"Error in routing: {e}")
+            # Record error in tracer
+            tracer.record_agent_activity("router", "error", response[:100], {"error": str(e)})
             # Default to END on errors
             return END
     
@@ -129,5 +243,11 @@ def create_workflow(streaming: bool = False) -> StateGraph:
     workflow.add_edge("data_management", "director")
     workflow.add_edge("integration", "director")
     
-    # Compile the graph
-    return workflow.compile()
+    # Create and add the observer for monitoring
+    #observer = LangGraphObserver()
+    compiled_graph = workflow.compile()
+    
+    # Add observer to graph
+    #compiled_graph.add_observer(observer)
+    
+    return compiled_graph

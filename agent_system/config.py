@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     MAX_HISTORY_LENGTH: int = 20
     
     # Visualization Settings
-    VISUALIZATION_DPI: int = 100
+    VISUALIZATION_DPI: int = 250
     VISUALIZATION_FORMAT: str = "png"
     
     # Logging
