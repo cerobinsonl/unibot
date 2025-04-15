@@ -3,7 +3,10 @@ from typing import List, Dict, Any, Tuple, Optional
 import sqlalchemy
 from sqlalchemy import create_engine, text
 import pandas as pd
+import numpy as np
 import os
+import re
+from decimal import Decimal
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -61,12 +64,20 @@ class DatabaseConnection:
                 raise e
         
         try:
+            # Process the query to remove escaped quotes which cause issues
+            # This is a workaround for the specific issue with quotes in identifiers
+            query = query.replace('\\"', '"')
+            
             # Execute the query
             with self.engine.connect() as connection:
                 # Check if it's a SELECT query (for safety)
-                is_select = query.strip().upper().startswith("SELECT")
+                # Use a more robust way to detect SELECT queries by removing leading whitespace and comments
+                cleaned_query = re.sub(r'^\s*(--.*?\n)*\s*', '', query, flags=re.DOTALL).strip().upper()
+                is_select = cleaned_query.startswith("SELECT")
                 
                 if not is_select and not os.getenv("ALLOW_NON_SELECT", "false").lower() == "true":
+                    # Log the detected query type for debugging
+                    logger.warning(f"Non-SELECT query detected: {cleaned_query[:20]}...")
                     raise ValueError("Only SELECT queries are allowed for safety")
                 
                 # Execute the query
@@ -75,8 +86,26 @@ class DatabaseConnection:
                 # Get column names
                 column_names = result.keys()
                 
-                # Fetch all rows
-                rows = [dict(row) for row in result]
+                # Fetch all rows - using the _asdict() method for safety
+                try:
+                    rows = []
+                    for row in result:
+                        try:
+                            # First try to convert using built-in _asdict() method
+                            rows.append(row._asdict())
+                        except (AttributeError, TypeError):
+                            # Fallback to manual conversion
+                            row_dict = {}
+                            for i, column in enumerate(column_names):
+                                try:
+                                    row_dict[column] = row[i]
+                                except (IndexError, TypeError):
+                                    row_dict[column] = None
+                            rows.append(row_dict)
+                except Exception as e:
+                    logger.error(f"Error converting rows to dictionaries: {e}")
+                    # If all else fails, return empty result
+                    rows = []
                 
                 # Clean up non-serializable data types
                 rows = self._clean_data_types(rows)
@@ -159,9 +188,9 @@ class DatabaseConnection:
             
             for key, value in row.items():
                 # Convert non-serializable types
-                if isinstance(value, (sqlalchemy.Decimal, pd._libs.tslibs.timestamps.Timestamp)):
+                if isinstance(value, Decimal):
                     clean_row[key] = float(value)
-                elif isinstance(value, pd._libs.tslibs.timestamps.Timestamp):
+                elif hasattr(value, 'isoformat') and callable(getattr(value, 'isoformat')):
                     clean_row[key] = value.isoformat()
                 elif isinstance(value, bytes):
                     clean_row[key] = value.decode('utf-8', errors='replace')
@@ -171,107 +200,3 @@ class DatabaseConnection:
             clean_rows.append(clean_row)
         
         return clean_rows
-    
-    # Additional methods specifically for working with the provided schema
-    
-    def get_person_by_id(self, person_id: int) -> Dict[str, Any]:
-        """
-        Retrieve a person by ID
-        
-        Args:
-            person_id: The PersonId to look for
-            
-        Returns:
-            Person data as dictionary
-        """
-        query = f'SELECT * FROM "Person" WHERE "PersonId" = {person_id}'
-        rows, _ = self.execute_query(query)
-        return rows[0] if rows else None
-    
-    def get_person_by_email(self, email: str) -> Dict[str, Any]:
-        """
-        Retrieve a person by email address
-        
-        Args:
-            email: The email address to look for
-            
-        Returns:
-            Person data as dictionary
-        """
-        query = f'SELECT * FROM "Person" WHERE "EmailAddress" = \'{email}\''
-        rows, _ = self.execute_query(query)
-        return rows[0] if rows else None
-    
-    def get_financial_aid_by_person(self, person_id: int) -> List[Dict[str, Any]]:
-        """
-        Retrieve financial aid records for a person
-        
-        Args:
-            person_id: The PersonId to look for
-            
-        Returns:
-            List of financial aid records
-        """
-        query = f'SELECT * FROM "FinancialAid" WHERE "PersonId" = {person_id}'
-        rows, _ = self.execute_query(query)
-        return rows
-    
-    def get_academic_record_by_person(self, person_id: int) -> Dict[str, Any]:
-        """
-        Retrieve academic record for a person
-        
-        Args:
-            person_id: The PersonId to look for
-            
-        Returns:
-            Academic record data as dictionary
-        """
-        query = f'SELECT * FROM "PsStudentAcademicRecord" WHERE "PersonId" = {person_id}'
-        rows, _ = self.execute_query(query)
-        return rows[0] if rows else None
-    
-    def get_enrollments_by_person(self, person_id: int) -> List[Dict[str, Any]]:
-        """
-        Retrieve enrollment records for a person
-        
-        Args:
-            person_id: The PersonId to look for
-            
-        Returns:
-            List of enrollment records
-        """
-        query = f'SELECT * FROM "PsStudentEnrollment" WHERE "PersonId" = {person_id}'
-        rows, _ = self.execute_query(query)
-        return rows
-    
-    def get_class_sections_for_enrollment(self, enrollment_id: int) -> List[Dict[str, Any]]:
-        """
-        Retrieve class sections for a specific enrollment
-        
-        Args:
-            enrollment_id: The StudentEnrollmentId to look for
-            
-        Returns:
-            List of class section records
-        """
-        query = f'''
-        SELECT cs.* FROM "ClassSection" cs
-        JOIN "PsStudentClassSection" scs ON cs."ClassSectionId" = scs."ClassSectionId"
-        WHERE scs."StudentEnrollmentId" = {enrollment_id}
-        '''
-        rows, _ = self.execute_query(query)
-        return rows
-    
-    def get_person_roles(self, person_id: int) -> List[Dict[str, Any]]:
-        """
-        Retrieve roles for a person
-        
-        Args:
-            person_id: The PersonId to look for
-            
-        Returns:
-            List of role records
-        """
-        query = f'SELECT * FROM "OperationPersonRole" WHERE "PersonId" = {person_id}'
-        rows, _ = self.execute_query(query)
-        return rows

@@ -3,10 +3,6 @@ from typing import Dict, List, Any, Optional
 import json
 import re
 import os
-import random
-
-# Import database tools
-from tools.database import DatabaseConnection
 
 # Import configuration
 from config import settings, AGENT_CONFIGS, get_llm
@@ -17,130 +13,190 @@ logger = logging.getLogger(__name__)
 class SQLAgent:
     """
     SQL Agent is responsible for translating natural language queries into SQL
-    and executing them against the university database.
+    and executing them directly against the university database.
     """
     
     def __init__(self):
-        """Initialize the SQL Agent"""
+        """Initialize the SQL Agent with dynamic schema retrieval"""
         # Create the LLM using the helper function
         self.llm = get_llm("sql_agent")
         
-        # Initialize database connection
-        self.db = DatabaseConnection(settings.DATABASE_URL)
+        # Try to set up the database connection
+        try:
+            import sqlalchemy
+            from sqlalchemy import create_engine, text
+            from decimal import Decimal
+            
+            # Connect to the database
+            conn_string = "postgresql://ps_user:ps_password@postgres:5432/postsecondary"
+            self.engine = create_engine(conn_string)
+            logger.info("SQL Agent DB connection initialized successfully")
+            self.db_initialized = True
+            
+            # Dynamically fetch the database schema on initialization
+            self.schema_info = self._get_database_schema()
+            logger.info(f"Retrieved database schema with {self.schema_info.count('CREATE TABLE')} tables")
+            
+        except Exception as e:
+            logger.error(f"Error initializing SQL database connection: {e}", exc_info=True)
+            self.db_initialized = False
+            self.schema_info = "Error: Could not retrieve database schema"
         
-        # For the POC, include database schema information in the prompt
-        # In production, this would be dynamically fetched
-        self.schema_info = """
-PostgreSQL Database Schema for University Administration:
-
--- Students Table
-CREATE TABLE students (
-    student_id SERIAL PRIMARY KEY,
-    first_name VARCHAR(100) NOT NULL,
-    last_name VARCHAR(100) NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    date_of_birth DATE,
-    gender VARCHAR(50),
-    address TEXT,
-    phone VARCHAR(20),
-    enrollment_date DATE,
-    major_id INTEGER REFERENCES departments(department_id),
-    graduation_date DATE,
-    status VARCHAR(20) CHECK (status IN ('active', 'inactive', 'graduated', 'leave of absence'))
-);
-
--- Faculty Table
-CREATE TABLE faculty (
-    faculty_id SERIAL PRIMARY KEY,
-    first_name VARCHAR(100) NOT NULL,
-    last_name VARCHAR(100) NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    department_id INTEGER REFERENCES departments(department_id),
-    position VARCHAR(100),
-    hire_date DATE,
-    phone VARCHAR(20),
-    status VARCHAR(20) CHECK (status IN ('active', 'on leave', 'retired', 'terminated'))
-);
-
--- Departments Table
-CREATE TABLE departments (
-    department_id SERIAL PRIMARY KEY,
-    name VARCHAR(100) UNIQUE NOT NULL,
-    code VARCHAR(10) UNIQUE NOT NULL,
-    chair_id INTEGER,
-    building VARCHAR(100),
-    budget DECIMAL(15, 2),
-    established_date DATE
-);
-
--- Courses Table
-CREATE TABLE courses (
-    course_id SERIAL PRIMARY KEY,
-    code VARCHAR(20) UNIQUE NOT NULL,
-    title VARCHAR(255) NOT NULL,
-    description TEXT,
-    department_id INTEGER REFERENCES departments(department_id),
-    credits INTEGER,
-    level VARCHAR(20) CHECK (level IN ('undergraduate', 'graduate'))
-);
-
--- Sections Table (Course offerings)
-CREATE TABLE sections (
-    section_id SERIAL PRIMARY KEY,
-    course_id INTEGER REFERENCES courses(course_id),
-    faculty_id INTEGER REFERENCES faculty(faculty_id),
-    semester VARCHAR(20),
-    year INTEGER,
-    room VARCHAR(50),
-    schedule VARCHAR(100),
-    capacity INTEGER,
-    status VARCHAR(20) CHECK (status IN ('open', 'closed', 'cancelled'))
-);
-
--- Enrollments Table
-CREATE TABLE enrollments (
-    enrollment_id SERIAL PRIMARY KEY,
-    student_id INTEGER REFERENCES students(student_id),
-    section_id INTEGER REFERENCES sections(section_id),
-    enrollment_date DATE,
-    grade VARCHAR(2),
-    status VARCHAR(20) CHECK (status IN ('active', 'dropped', 'completed'))
-);
-"""
-        
-        # Create the SQL generation prompt
-        self.sql_prompt = f"""
-You are the SQL Query Agent for a university administrative system.
-Your specialty is translating natural language requests into SQL queries
-for a PostgreSQL database containing university data.
+        # Create the code generation prompt
+        self.code_prompt = """
+You need to generate a SQL query based on a natural language request for a university database.
 
 University Database Schema:
-{self.schema_info}
+{schema_info}
 
-Format your response as a JSON object with these keys:
-- sql_query: The PostgreSQL query to execute
-- explanation: Brief explanation of what the query does and why
+IMPORTANT GUIDELINES:
+1. This is the ACTUAL schema from the database - use ONLY these tables and columns.
+2. DO NOT include comments in your SQL query, just the pure SQL.
+3. Always use double quotes around table and column names: "TableName"."ColumnName".
+4. Only query tables that exist in the schema provided.
+5. If you cannot answer a query with the available schema, explain what's missing.
+6. Never invent or assume tables or columns that aren't in the schema.
 
-Ensure your SQL query:
-1. Is valid PostgreSQL syntax
-2. Uses appropriate joins and conditions
-3. Includes proper handling of NULL values
-4. Uses clear column aliases for readability
-5. Is optimized for performance when possible
-6. Is injection-safe (no string concatenation)
+The request is: {task}
 
-Example:
-{{
-  "sql_query": "SELECT d.name, COUNT(s.student_id) AS student_count FROM departments d LEFT JOIN students s ON d.department_id = s.major_id GROUP BY d.name ORDER BY student_count DESC;",
-  "explanation": "This query counts the number of students in each department by joining the departments and students tables, grouping by department name, and ordering by student count in descending order."
-}}
+Based on the schema provided, generate a single SELECT SQL query that will answer this request.
+Make sure to use only tables and columns that actually exist in the schema above.
 
-Task: {task}
+Reply with ONLY the SQL query, nothing else.
 """
+    
+    def _get_database_schema(self) -> str:
+        """
+        Dynamically retrieve and format the database schema
+        
+        Returns:
+            Formatted database schema as a string
+        """
+        schema_info = []
+        try:
+            from sqlalchemy import text
+            
+            # Get all tables in the database
+            with self.engine.connect() as connection:
+                # Get list of tables
+                tables_query = """
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public'
+                ORDER BY table_name;
+                """
+                result = connection.execute(text(tables_query))
+                tables = [row[0] for row in result]
+                
+                # For each table, get its schema definition
+                for table in tables:
+                    columns_query = f"""
+                    SELECT 
+                        column_name, 
+                        data_type, 
+                        is_nullable,
+                        column_default,
+                        character_maximum_length
+                    FROM information_schema.columns
+                    WHERE table_name = '{table}'
+                    ORDER BY ordinal_position;
+                    """
+                    result = connection.execute(text(columns_query))
+                    columns = []
+                    
+                    for row in result:
+                        col_name, data_type, nullable, default, max_length = row
+                        
+                        # Format column type with length if applicable
+                        if max_length and data_type == 'character varying':
+                            data_type = f"VARCHAR({max_length})"
+                        
+                        # Format nullable constraint
+                        null_constraint = "NULL" if nullable == "YES" else "NOT NULL"
+                        
+                        # Format default if exists
+                        default_str = f" DEFAULT {default}" if default else ""
+                        
+                        # Add to columns list
+                        columns.append(f'    "{col_name}" {data_type} {null_constraint}{default_str}')
+                    
+                    # Get primary key information
+                    pk_query = f"""
+                    SELECT a.attname
+                    FROM   pg_index i
+                    JOIN   pg_attribute a ON a.attrelid = i.indrelid
+                                        AND a.attnum = ANY(i.indkey)
+                    WHERE  i.indrelid = '"{table}"'::regclass
+                    AND    i.indisprimary;
+                    """
+                    try:
+                        pk_result = connection.execute(text(pk_query))
+                        pk_columns = [row[0] for row in pk_result]
+                        if pk_columns:
+                            pk_constraint = f'    PRIMARY KEY ("{pk_columns[0]}")'
+                            columns.append(pk_constraint)
+                    except:
+                        # Skip primary key if query fails
+                        pass
+                    
+                    # Try to get foreign key information
+                    fk_query = f"""
+                    SELECT
+                        kcu.column_name,
+                        ccu.table_name AS foreign_table_name,
+                        ccu.column_name AS foreign_column_name
+                    FROM
+                        information_schema.table_constraints AS tc
+                        JOIN information_schema.key_column_usage AS kcu
+                          ON tc.constraint_name = kcu.constraint_name
+                          AND tc.table_schema = kcu.table_schema
+                        JOIN information_schema.constraint_column_usage AS ccu
+                          ON ccu.constraint_name = tc.constraint_name
+                          AND ccu.table_schema = tc.table_schema
+                    WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name='{table}';
+                    """
+                    try:
+                        fk_result = connection.execute(text(fk_query))
+                        for row in fk_result:
+                            col_name, foreign_table, foreign_col = row
+                            fk_constraint = f'    FOREIGN KEY ("{col_name}") REFERENCES "{foreign_table}"("{foreign_col}")'
+                            columns.append(fk_constraint)
+                    except:
+                        # Skip foreign keys if query fails
+                        pass
+                    
+                    # Format as CREATE TABLE statement
+                    table_def = f'CREATE TABLE "{table}" (\n'
+                    table_def += ",\n".join(columns)
+                    table_def += "\n);"
+                    
+                    schema_info.append(table_def)
+                
+                # Get row counts for each table to help with query planning
+                row_counts = []
+                for table in tables:
+                    try:
+                        count_query = f'SELECT COUNT(*) FROM "{table}"'
+                        count_result = connection.execute(text(count_query))
+                        count = count_result.scalar()
+                        row_counts.append(f'-- "{table}" has {count} rows')
+                    except:
+                        # Skip if count query fails
+                        pass
+                
+                if row_counts:
+                    schema_info.append("\n-- Table Row Counts:")
+                    schema_info.extend(row_counts)
+                
+                return "\n\n".join(schema_info)
+        
+        except Exception as e:
+            logger.error(f"Error retrieving database schema: {e}")
+            return "Error retrieving database schema: " + str(e)
     
     def __call__(self, task: str) -> Dict[str, Any]:
         """
-        Generate and execute a SQL query based on the natural language task
+        Process a natural language query by generating and executing SQL
         
         Args:
             task: Natural language description of the data to retrieve
@@ -149,107 +205,107 @@ Task: {task}
             Dictionary containing query results
         """
         try:
-            # Generate SQL query
-            formatted_prompt = self.sql_prompt.format(task=task)
-            sql_response = self.llm.invoke(formatted_prompt).content
+            if not self.db_initialized:
+                raise ValueError("SQL database connection was not properly initialized")
             
-            # Parse the response
-            try:
-                # Try to parse as JSON
-                parsed = json.loads(sql_response)
-                sql_query = parsed.get("sql_query", "")
-                explanation = parsed.get("explanation", "")
-            except json.JSONDecodeError:
-                # Extract query using regex if not valid JSON
-                match = re.search(r'```sql\s*(.*?)\s*```', sql_response, re.DOTALL)
-                if match:
-                    sql_query = match.group(1)
-                else:
-                    # Last resort, try to find anything that looks like a SQL query
-                    match = re.search(r'SELECT\s+.*?;', sql_response, re.DOTALL | re.IGNORECASE)
-                    sql_query = match.group(0) if match else ""
-                
-                explanation = "Query extracted from non-JSON response."
+            # Log the query task
+            logger.info(f"Processing SQL query task: {task}")
+            
+            # Generate the SQL query using the LLM
+            formatted_prompt = self.code_prompt.format(
+                schema_info=self.schema_info,
+                task=task
+            )
+            
+            query_response = self.llm.invoke(formatted_prompt)
+            sql_query = query_response.content.strip()
+            
+            # Clean up the query
+            # Remove any markdown formatting
+            sql_query = re.sub(r'^```sql\s*', '', sql_query)
+            sql_query = re.sub(r'\s*```$', '', sql_query)
+            
+            # Remove any comments that might cause issues with the SELECT check
+            sql_query = re.sub(r'--.*?\n', '\n', sql_query)
+            sql_query = re.sub(r'/\*.*?\*/', '', sql_query, flags=re.DOTALL)
+            
+            # Make sure it starts with SELECT (after removing comments)
+            sql_query = sql_query.strip()
+            
+            # Log the generated query
+            logger.info(f"Cleaned SQL query: {sql_query}")
+            
+            # Check if the response indicates the query can't be answered with available schema
+            if "cannot" in sql_query.lower() or "missing" in sql_query.lower() or "don't have" in sql_query.lower():
+                logger.warning(f"LLM indicated schema limitations: {sql_query}")
+                return {
+                    "error": "Cannot execute query with available schema",
+                    "message": sql_query,
+                    "results": [],
+                    "column_names": ["message"],
+                    "row_count": 0,
+                    "is_error": True
+                }
+            
+            # Import necessary modules here to avoid issues
+            from sqlalchemy import text
+            from decimal import Decimal
             
             # Execute the query
-            results, column_names = self.db.execute_query(sql_query)
+            with self.engine.connect() as connection:
+                # Check if it's a SELECT query
+                if not sql_query.strip().upper().startswith("SELECT"):
+                    raise ValueError(f"Only SELECT queries are allowed for safety. Query starts with: {sql_query[:20]}")
+                
+                # Execute the query
+                result = connection.execute(text(sql_query))
+                
+                # Get column names (convert to list to avoid RMKeyView issues)
+                column_names = list(result.keys())
+                
+                # Fetch all rows
+                rows = []
+                for row in result:
+                    # Convert row to dictionary
+                    row_dict = {}
+                    for i, col in enumerate(column_names):
+                        value = row[i]
+                        # Convert non-serializable types
+                        if isinstance(value, Decimal):
+                            row_dict[col] = float(value)
+                        elif hasattr(value, 'isoformat'):
+                            row_dict[col] = value.isoformat()
+                        else:
+                            row_dict[col] = value
+                    rows.append(row_dict)
             
-            # Return results
+            # If no results found, provide clear feedback
+            if len(rows) == 0:
+                logger.info("Query returned zero results")
+                return {
+                    "query": sql_query,
+                    "results": [],
+                    "column_names": column_names,
+                    "row_count": 0,
+                    "message": "The query executed successfully but returned no results."
+                }
+            
+            # Return the results
             return {
                 "query": sql_query,
-                "explanation": explanation,
-                "results": results,
+                "results": rows,
                 "column_names": column_names,
-                "row_count": len(results)
+                "row_count": len(rows)
             }
             
         except Exception as e:
             logger.error(f"Error in SQL Agent: {e}", exc_info=True)
             
-            # For the POC, we'll return mock data when the real database fails
-            # In production, this would return a proper error
-            if os.getenv("MOCK_DATA_ON_ERROR", "true").lower() == "true":
-                return self._generate_mock_data(task)
-            
-            raise e
-    
-    def _generate_mock_data(self, task: str) -> Dict[str, Any]:
-        """
-        Generate mock data for demonstration purposes
-        
-        Args:
-            task: The original task that failed
-            
-        Returns:
-            Dictionary with mock data
-        """
-        logger.info(f"Generating mock data for task: {task}")
-        
-        # Create a prompt for generating mock data
-        mock_prompt = f"""
-You are a database simulation agent. When a real database query fails, you generate realistic mock data 
-that could have been returned by the query.
-
-Analyze the query task and generate:
-1. A JSON array of objects representing rows of data
-2. A list of column names
-3. A plausible query that might have been used
-
-Format your response as a JSON object:
-{{
-  "mock_query": "The SQL query that would have been executed",
-  "mock_column_names": ["col1", "col2", ...],
-  "mock_results": [{{"col1": "value1", "col2": 123, ...}}, ...]
-}}
-
-Make the data realistic for a university setting, with appropriate data types, value ranges, and relationships.
-Include approximately 10-20 rows of data.
-
-Task: {task}
-"""
-        
-        # Generate mock data
-        try:
-            mock_response = self.llm.invoke(mock_prompt).content
-            mock_data = json.loads(mock_response)
-            
+            # Return error information
             return {
-                "query": mock_data.get("mock_query", "SELECT * FROM mock_data"),
-                "explanation": "Mock data generated for demonstration",
-                "results": mock_data.get("mock_results", []),
-                "column_names": mock_data.get("mock_column_names", []),
-                "row_count": len(mock_data.get("mock_results", [])),
-                "is_mock": True
-            }
-        except Exception as e:
-            logger.error(f"Error generating mock data: {e}")
-            
-            # If parsing fails, return minimal mock data
-            return {
-                "query": "SELECT * FROM mock_data",
-                "explanation": "Mock data generated for demonstration",
-                "results": [{"id": 1, "name": "Mock Result"}],
-                "column_names": ["id", "name"],
+                "error": str(e),
+                "results": [{"error_message": str(e)}],
+                "column_names": ["error_message"],
                 "row_count": 1,
-                "is_mock": True
+                "is_error": True
             }

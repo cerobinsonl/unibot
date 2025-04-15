@@ -40,6 +40,6 @@ class SyntheticDataRequest(BaseModel):
     """
     Model for synthetic data generation requests
     """
-    schema: Dict[str, Any] = Field(..., description="Schema for synthetic data")
+    data_schema: Dict[str, Any] = Field(..., description="Schema for synthetic data")
     amount: int = Field(..., description="Number of records to generate")
     session_id: Optional[str] = Field(None, description="Session identifier")

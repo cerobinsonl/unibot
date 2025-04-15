@@ -1,6 +1,7 @@
 from typing import Dict, List, Any, Optional
 import json
 import logging
+import tabulate
 from datetime import datetime
 
 # Import configuration
@@ -48,12 +49,12 @@ Format your response as a JSON object with these keys:
 - needs_visualization: true/false whether this request requires a visualization
 
 Example:
-{
+{{
   "sql_task": "Retrieve student enrollment counts by department for the last academic year",
   "analysis_task": "Calculate department growth rates compared to previous year and identify top 5 growing departments",
   "visualization_task": "Create a bar chart showing enrollment by department with growth indicators",
   "needs_visualization": true
-}
+}}
 
 Important: Make your descriptions specific and detailed so each specialized agent knows exactly what to do.
 
@@ -245,7 +246,7 @@ Create a comprehensive response synthesizing all this information.
         
         if len(sample_results) > 0:
             formatted += "Sample data:\n"
-            import tabulate
+            
             try:
                 # Try to format as a table using tabulate
                 formatted += tabulate.tabulate(

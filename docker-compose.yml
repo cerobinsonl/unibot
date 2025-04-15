@@ -50,6 +50,12 @@ services:
     environment:
       - DATABASE_URL=postgresql://${DB_USER:-admin}:${DB_PASSWORD:-password}@postgres:5432/${DB_NAME:-university}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+      - LLM_MODEL=${LLM_MODEL:-gemini-pro}
+      - API_DEBUG=${API_DEBUG:-false}
+      - AGENT_DEBUG=${AGENT_DEBUG:-false}
+      - MOCK_EXTERNAL_APIS=${MOCK_EXTERNAL_APIS:-true}
     depends_on:
       postgres:
         condition: service_healthy

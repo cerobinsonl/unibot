@@ -93,6 +93,11 @@ Please synthesize this information into a final response for the university staf
         current_agent = state.get("current_agent")
         intermediate_steps = state.get("intermediate_steps", [])
         
+        # Initialize intermediate_steps if it's None
+        if intermediate_steps is None:
+            intermediate_steps = []
+            state["intermediate_steps"] = intermediate_steps
+        
         # If we're coming from a coordinator, synthesize the final response
         if current_agent and current_agent != "director":
             # Get the most recent intermediate step from the coordinator

@@ -143,10 +143,10 @@ Example for UPDATE:
   "validation_warnings": ["Verify student_id exists", "Ensure graduation_date is after enrollment_date"]
 }}
 
-Operation type: {operation_type}
-Table: {table}
-Data: {data}
-Condition: {condition}
+Operation type: {{operation_type}}
+Table: {{table}}
+Data: {{data}}
+Condition: {{condition}}
 
 Please generate the appropriate SQL statement.
 """

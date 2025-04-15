@@ -71,7 +71,7 @@ INSERT INTO "FinancialAidAward" ("FinancialAidId", "AwardName", "AwardAmount", "
 SELECT
   "FinancialAidId",
   'Award for person ' || "PersonId",
-  round(500 + random() * 1500, 2) AS "AwardAmount",
+ round((500 + random() * 1500)::numeric, 2) AS "AwardAmount",
   CURRENT_DATE - (random() * 90)::int * interval '1 day' AS "AwardDate"
 FROM "FinancialAid";
 
@@ -82,7 +82,7 @@ FROM "FinancialAid";
 INSERT INTO "PsStudentAcademicRecord" ("PersonId", "GPA", "AcademicStanding", "CreditsEarned", "CreditsAttempted")
 SELECT
   "PersonId",
-  round(2.0 + random() * 2.0, 2) AS "GPA",
+ round((2.0 + random() * 2.0)::numeric, 2) AS "GPA",
   CASE WHEN random() < 0.1 THEN 'Probatoria' ELSE 'En buen estado' END AS "AcademicStanding",
   (random() * 120)::int AS "CreditsEarned",
   (random() * 130)::int AS "CreditsAttempted"

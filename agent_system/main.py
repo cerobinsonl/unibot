@@ -87,6 +87,9 @@ async def process_request(request_data: Dict[str, Any]):
         })
         
         # Update history
+        if state.history is None:
+            state.history = []
+        
         state.history.append({"role": "user", "content": user_message})
         state.history.append({"role": "assistant", "content": result.get("response", "")})
         
@@ -101,9 +104,9 @@ async def process_request(request_data: Dict[str, Any]):
         }
         
         # Add visualization if present
-        if "visualization" in result:
-            response["image_data"] = result["visualization"]["image_data"]
-            response["image_type"] = result["visualization"]["image_type"]
+        if "visualization" in result and result["visualization"] is not None:
+            response["image_data"] = result["visualization"].get("image_data")
+            response["image_type"] = result["visualization"].get("image_type")
         
         return response
         
@@ -144,6 +147,9 @@ async def websocket_process(request_data: Dict[str, Any]):
         })
         
         # Update history
+        if state.history is None:
+            state.history = []
+            
         state.history.append({"role": "user", "content": user_message})
         state.history.append({"role": "assistant", "content": result.get("response", "")})
         
@@ -158,9 +164,9 @@ async def websocket_process(request_data: Dict[str, Any]):
         }
         
         # Add visualization if present
-        if "visualization" in result:
-            response["image_data"] = result["visualization"]["image_data"]
-            response["image_type"] = result["visualization"]["image_type"]
+        if "visualization" in result and result["visualization"] is not None:
+            response["image_data"] = result["visualization"].get("image_data")
+            response["image_type"] = result["visualization"].get("image_type")
         
         return response
         
@@ -220,6 +226,9 @@ async def stream_process(request_data: Dict[str, Any]):
                 await asyncio.sleep(0.05)
             
             # Update history after streaming completes
+            if state.history is None:
+                state.history = []
+                
             state.history.append({"role": "user", "content": user_message})
             # We'll need to reconstruct the full response from chunks for history
             # This would need to be implemented based on your specific chunk format

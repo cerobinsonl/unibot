@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "gemini")  # "openai" or "gemini"
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "gemini-pro")  # gemini-pro or gpt-4-turbo
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "gemini-pro")  # gemini-pro, gemini-2.0-flash or gpt-4-turbo
     
     # Database Configuration
     DATABASE_URL: str = os.getenv(
@@ -264,8 +264,11 @@ def get_llm(agent_type: str = "director"):
         # Use Gemini
         from langchain_google_genai import ChatGoogleGenerativeAI
         
+        # For Gemini models, we need to set convert_system_message_to_human=True
+        # to avoid issues with system messages
         return ChatGoogleGenerativeAI(
             api_key=settings.GOOGLE_API_KEY,
             model=model,
-            temperature=temperature
+            temperature=temperature,
+            convert_system_message_to_human=True  # Fix for system message error
         )

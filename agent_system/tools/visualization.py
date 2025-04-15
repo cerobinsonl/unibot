@@ -1,6 +1,7 @@
 import logging
 from typing import List, Dict, Any, Tuple, Optional
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import io
@@ -44,7 +45,7 @@ def create_visualization(code: str, data: List[Dict[str, Any]]) -> Tuple[bytes, 
             'pd': pd,
             'plt': plt,
             'sns': sns,
-            'np': pd.np,
+            'np': np,
             'df': df,
             'io': io,
             'buffer': buf
