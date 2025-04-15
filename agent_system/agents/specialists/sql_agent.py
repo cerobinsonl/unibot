@@ -27,15 +27,17 @@ class SQLAgent:
             from sqlalchemy import create_engine, text
             from decimal import Decimal
             
-            # Connect to the database
-            conn_string = "postgresql://ps_user:ps_password@postgres:5432/postsecondary"
+            # Connect to the database using environment variables or settings
+            conn_string = settings.DATABASE_URL
             self.engine = create_engine(conn_string)
             logger.info("SQL Agent DB connection initialized successfully")
             self.db_initialized = True
             
             # Dynamically fetch the database schema on initialization
             self.schema_info = self._get_database_schema()
-            logger.info(f"Retrieved database schema with {self.schema_info.count('CREATE TABLE')} tables")
+            schema_size = len(self.schema_info)
+            table_count = self.schema_info.count('CREATE TABLE')
+            logger.info(f"Retrieved database schema with {table_count} tables, schema size: {schema_size} chars")
             
         except Exception as e:
             logger.error(f"Error initializing SQL database connection: {e}", exc_info=True)
@@ -56,6 +58,9 @@ IMPORTANT GUIDELINES:
 4. Only query tables that exist in the schema provided.
 5. If you cannot answer a query with the available schema, explain what's missing.
 6. Never invent or assume tables or columns that aren't in the schema.
+7. The database is PostgreSQL.
+8. Pay close attention to the actual table and column names in the schema.
+9. NEVER use fallback queries - if you can't find the right tables, indicate that clearly.
 
 The request is: {task}
 
@@ -188,6 +193,13 @@ Reply with ONLY the SQL query, nothing else.
                     schema_info.append("\n-- Table Row Counts:")
                     schema_info.extend(row_counts)
                 
+                # Add explicit notes about important tables
+                important_tables = [t for t in tables if ('Student' in t or 'Person' in t or 'Enrollment' in t)]
+                if important_tables:
+                    schema_info.append("\n-- Important Tables for Student Queries:")
+                    for table in important_tables:
+                        schema_info.append(f'-- Use "{table}" for student-related information')
+                
                 return "\n\n".join(schema_info)
         
         except Exception as e:
@@ -258,45 +270,59 @@ Reply with ONLY the SQL query, nothing else.
                     raise ValueError(f"Only SELECT queries are allowed for safety. Query starts with: {sql_query[:20]}")
                 
                 # Execute the query
-                result = connection.execute(text(sql_query))
-                
-                # Get column names (convert to list to avoid RMKeyView issues)
-                column_names = list(result.keys())
-                
-                # Fetch all rows
-                rows = []
-                for row in result:
-                    # Convert row to dictionary
-                    row_dict = {}
-                    for i, col in enumerate(column_names):
-                        value = row[i]
-                        # Convert non-serializable types
-                        if isinstance(value, Decimal):
-                            row_dict[col] = float(value)
-                        elif hasattr(value, 'isoformat'):
-                            row_dict[col] = value.isoformat()
-                        else:
-                            row_dict[col] = value
-                    rows.append(row_dict)
-            
-            # If no results found, provide clear feedback
-            if len(rows) == 0:
-                logger.info("Query returned zero results")
-                return {
-                    "query": sql_query,
-                    "results": [],
-                    "column_names": column_names,
-                    "row_count": 0,
-                    "message": "The query executed successfully but returned no results."
-                }
-            
-            # Return the results
-            return {
-                "query": sql_query,
-                "results": rows,
-                "column_names": column_names,
-                "row_count": len(rows)
-            }
+                try:
+                    result = connection.execute(text(sql_query))
+                    
+                    # Get column names (convert to list to avoid RMKeyView issues)
+                    column_names = list(result.keys())
+                    
+                    # Fetch all rows
+                    rows = []
+                    for row in result:
+                        # Convert row to dictionary
+                        row_dict = {}
+                        for i, col in enumerate(column_names):
+                            value = row[i]
+                            # Convert non-serializable types
+                            if isinstance(value, Decimal):
+                                row_dict[col] = float(value)
+                            elif hasattr(value, 'isoformat'):
+                                row_dict[col] = value.isoformat()
+                            else:
+                                row_dict[col] = value
+                        rows.append(row_dict)
+                        
+                    # If no results found, provide clear feedback
+                    if len(rows) == 0:
+                        logger.info("Query returned zero results")
+                        return {
+                            "query": sql_query,
+                            "results": [],
+                            "column_names": column_names,
+                            "row_count": 0,
+                            "message": "The query executed successfully but returned no results."
+                        }
+                    
+                    # Return the results
+                    return {
+                        "query": sql_query,
+                        "results": rows,
+                        "column_names": column_names,
+                        "row_count": len(rows)
+                    }
+                    
+                except Exception as db_error:
+                    logger.error(f"Database error executing query: {db_error}")
+                    
+                    # Return with specific database error
+                    return {
+                        "error": f"Database error: {str(db_error)}",
+                        "query": sql_query,
+                        "results": [{"error_message": str(db_error)}],
+                        "column_names": ["error_message"],
+                        "row_count": 1,
+                        "is_error": True
+                    }
             
         except Exception as e:
             logger.error(f"Error in SQL Agent: {e}", exc_info=True)

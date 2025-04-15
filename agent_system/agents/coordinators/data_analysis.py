@@ -73,14 +73,17 @@ a detailed response that explains the findings clearly for university administra
 
 Your response should:
 1. Summarize the key insights from the data
-2. Explain any important patterns or trends
-3. Reference the visualization if one was created
-4. Provide context to help interpret the results
-5. Be written in clear, non-technical language suitable for university staff
+2. Use specific numbers and statistics from the query results
+3. Explain any important patterns or trends
+4. Reference the visualization if one was created
+5. Provide context to help interpret the results
+6. Be written in clear, non-technical language suitable for university staff
 
 If there were any issues or limitations with the data, mention them briefly.
 
 User request: {user_input}
+
+SQL Query: {sql_query}
 
 SQL Query Results: {sql_results}
 
@@ -156,6 +159,14 @@ Create a comprehensive response synthesizing all this information.
                 "timestamp": self._get_timestamp()
             })
             
+            # Log SQL query results
+            logger.info(f"SQL query completed. Row count: {sql_result.get('row_count', 0)}")
+            
+            # Check if there was an error with the SQL query
+            if sql_result.get("is_error", False):
+                logger.warning(f"SQL query error: {sql_result.get('error', 'Unknown error')}")
+                return self._handle_sql_error(state, user_input, sql_result, intermediate_steps)
+            
             # Step 3: Perform analysis
             analysis_result = self.analysis_agent({
                 "task": plan["analysis_task"],
@@ -203,6 +214,7 @@ Create a comprehensive response synthesizing all this information.
             # Step 5: Synthesize results
             synthesis_input = {
                 "user_input": user_input,
+                "sql_query": sql_result.get("query", ""),
                 "sql_results": self._format_sql_results(sql_result),
                 "analysis_results": analysis_result["summary"],
                 "has_visualization": "Yes, a visualization was created and attached." if visualization_result else "No visualization was created."
@@ -227,6 +239,33 @@ Create a comprehensive response synthesizing all this information.
             state["current_agent"] = "data_analysis"
             
             return state
+    
+    def _handle_sql_error(self, state: Dict[str, Any], user_input: str, sql_result: Dict[str, Any], intermediate_steps: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Handle SQL query errors with a graceful response"""
+        
+        error_message = sql_result.get("error", "Unknown database error")
+        query_attempted = sql_result.get("query", "No query available")
+        
+        # Create an error response that's helpful to the user
+        error_response = f"""
+I'm sorry, but I encountered an issue while retrieving the data you requested. 
+
+The database query could not be completed successfully. This might be because:
+1. The specific data you're looking for might not be available in our database
+2. There might be a technical issue with accessing the database
+3. The way the request was phrased might not match our database structure
+
+Error details: {error_message}
+
+Would you like to try rephrasing your request or ask for different information?
+"""
+        
+        # Update state
+        state["response"] = error_response
+        state["intermediate_steps"] = intermediate_steps
+        state["current_agent"] = "data_analysis"
+        
+        return state
     
     def _format_sql_results(self, sql_result: Dict[str, Any]) -> str:
         """Format SQL results for readability in the prompt"""

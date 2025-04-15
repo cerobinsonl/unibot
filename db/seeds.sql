@@ -15,16 +15,16 @@ SELECT
     middle_names[ceil(random() * array_length(middle_names, 1))::int] AS "MiddleName",
     last_names[ceil(random() * array_length(last_names, 1))::int] AS "LastName",
     lower(first_names[ceil(random() * array_length(first_names, 1))::int] || '.' ||
-          last_names[ceil(random() * array_length(last_names, 1))::int]) || '@example.com' AS "EmailAddress",
+          last_names[ceil(random() * array_length(last_names, 1))::int]) || '@university.edu' AS "EmailAddress",
     CURRENT_DATE - ((20 + (random() * 10)::int) * interval '365 day') AS "DateOfBirth",
     CASE WHEN random() < 0.5 THEN 'Male' ELSE 'Female' END AS "Gender",
     '555-010' || to_char(g, 'FM000') AS "PhoneNumber"
-FROM generate_series(1, 100) g,
+FROM generate_series(1, 1000) g,
 (
   SELECT 
-    ARRAY['Alice', 'Bob', 'Carlos', 'Diana', 'Eva', 'Francisco', 'Gabriela', 'Hugo', 'Ingrid', 'Jorge'] AS first_names,
+    ARRAY['Alice', 'Bob', 'David', 'Diana', 'Eve', 'Jhon', 'Jenny', 'Christian', 'Michelle', 'Daniel'] AS first_names,
     ARRAY['Marie', 'Alexander', 'Lee', 'Ann', 'James', 'Grace', 'Rosa', 'Michael', 'Sophia', 'Lynn'] AS middle_names,
-    ARRAY['Gomez', 'Rodriguez', 'Martinez', 'Lopez', 'Garcia', 'Hernandez', 'Perez', 'Sanchez', 'Ramirez', 'Diaz'] AS last_names
+    ARRAY['Ford', 'Smith', 'Lillard', 'Davis', 'Livingston', 'Hernandez', 'Edwards', 'Reynolds', 'Murphy', 'Curry'] AS last_names
 ) AS names;
 
 --------------------------------------------------------
@@ -83,7 +83,7 @@ INSERT INTO "PsStudentAcademicRecord" ("PersonId", "GPA", "AcademicStanding", "C
 SELECT
   "PersonId",
  round((2.0 + random() * 2.0)::numeric, 2) AS "GPA",
-  CASE WHEN random() < 0.1 THEN 'Probatoria' ELSE 'En buen estado' END AS "AcademicStanding",
+  CASE WHEN random() < 0.1 THEN 'Probation' ELSE 'Good' END AS "AcademicStanding",
   (random() * 120)::int AS "CreditsEarned",
   (random() * 130)::int AS "CreditsAttempted"
 FROM "Person";
@@ -132,11 +132,11 @@ FROM "Person";
 INSERT INTO "PsStudentProgram" ("PersonId", "ProgramName", "Department", "StartTerm", "EndTerm", "ProgramStatus")
 SELECT 
     "PersonId",
-    'Programa ' || "PersonId",
-    'Departamento ' || (((random() * 5)::int + 1)),
+    'Program ' || FLOOR(1 + random() * 20)::int,
+    'Department ' || (((random() * 5)::int + 1)),
     '2025-Fall',
     '2026-Spring',
-    'Activo'
+    'Active'
 FROM "Person";
 
 --------------------------------------------------------
@@ -156,14 +156,26 @@ FROM generate_series(1, 10) s;
 -- 12. Insertar datos en la tabla PsStudentEnrollment
 --------------------------------------------------------
 -- Se crea una inscripción para cada persona, relacionándola con el programa asignado.
+WITH student_enrollments AS (
+    SELECT
+        p."PersonId",
+        CURRENT_DATE - ((random() * 365)::int * interval '1 day') AS "EnrollmentDate",
+        CASE WHEN random() < 0.8 THEN 'Active' ELSE 'Inactive' END AS "EnrollmentStatus",
+        ROW_NUMBER() OVER (ORDER BY p."PersonId") AS rn
+    FROM "Person" p
+    JOIN "OperationPersonRole" opr ON p."PersonId" = opr."PersonId"
+    WHERE opr."RoleName" = 'Student'
+)
 INSERT INTO "PsStudentEnrollment" ("PersonId", "EnrollmentDate", "EnrollmentStatus", "ProgramId")
 SELECT
-    p."PersonId",
-    CURRENT_DATE - (random() * 365)::int * interval '1 day' AS "EnrollmentDate",
-    'Activo' AS "EnrollmentStatus",
-    prog."StudentProgramId"
-FROM "Person" p
-JOIN "PsStudentProgram" prog ON p."PersonId" = prog."PersonId";
+    "PersonId",
+    "EnrollmentDate",
+    "EnrollmentStatus",
+    CASE
+        WHEN rn <= 20 THEN rn
+        ELSE FLOOR(1 + (random()^1.5) * 20)::int
+    END AS "ProgramId"
+FROM student_enrollments;
 
 --------------------------------------------------------
 -- 13. Insertar datos en la tabla PsStudentClassSection

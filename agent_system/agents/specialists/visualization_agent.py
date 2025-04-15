@@ -41,6 +41,12 @@ The code should:
 5. Handle any data transformation needed for visualization
 6. Save the plot to a BytesIO object for display
 
+IMPORTANT: 
+- Use ONLY the data provided to you
+- Do NOT assume or generate data that doesn't exist in the input
+- If the data is empty or has very few records, create a simple message visualization stating "No data available" or "Insufficient data"
+- Use ONLY these libraries: matplotlib, seaborn, pandas, numpy
+
 Format your response as a JSON object with these keys:
 - chart_type: The type of chart you're creating (e.g., "bar", "line", "scatter", "pie")
 - code: The Python code that will generate the visualization
@@ -75,6 +81,11 @@ Please generate the visualization code based on this information.
             data = input_data.get("data", [])
             column_names = input_data.get("column_names", [])
             analysis = input_data.get("analysis", {})
+            
+            # Check if data is empty or insufficient
+            if not data or len(data) < 1:
+                logger.warning(f"Insufficient data for visualization: {len(data) if data else 0} records")
+                return self._generate_no_data_visualization("No data available for visualization.")
             
             # Prepare data sample for prompt (limit to 5 rows for brevity)
             data_sample = str(data[:5])
@@ -116,7 +127,11 @@ Please generate the visualization code based on this information.
                 explanation = "Visualization code extracted from non-JSON response"
             
             if not code:
-                raise ValueError("No visualization code could be extracted from the response")
+                logger.warning("No visualization code could be extracted from the response")
+                return self._generate_no_data_visualization("Couldn't generate appropriate visualization code.")
+            
+            # Log the code being used
+            logger.debug(f"Visualization code: {code[:500]}...")
             
             # Create the visualization using the extracted code
             image_data, image_format = create_visualization(code, data)
@@ -134,115 +149,97 @@ Please generate the visualization code based on this information.
             
         except Exception as e:
             logger.error(f"Error in Visualization Agent: {e}", exc_info=True)
-            
-            # For the POC, return a fallback visualization on error
-            if os.getenv("MOCK_VISUALIZATION_ON_ERROR", "true").lower() == "true":
-                return self._generate_fallback_visualization(task, data, column_names)
-            
-            raise e
+            return self._generate_error_visualization(str(e))
     
-    def _generate_fallback_visualization(self, task: str, data: List[Dict[str, Any]], column_names: List[str]) -> Dict[str, Any]:
+    def _generate_no_data_visualization(self, message: str) -> Dict[str, Any]:
         """
-        Generate a simple fallback visualization when the main one fails
+        Generate a visualization indicating no data is available
         
         Args:
-            task: The original visualization task
-            data: The data to visualize
-            column_names: Column names in the data
+            message: Message to display
             
         Returns:
             Dictionary with visualization data
         """
-        logger.info("Generating fallback visualization")
+        logger.info(f"Generating no-data visualization with message: {message}")
+        
+        # Simple code to create a text-based visualization
+        code = f"""
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(10, 6))
+plt.text(0.5, 0.5, "{message}", 
+         horizontalalignment='center', verticalalignment='center',
+         transform=plt.gca().transAxes, fontsize=16)
+plt.axis('off')
+
+# Save to buffer
+buf = buffer  # Use the buffer provided in the execution environment
+plt.savefig(buf, format='{settings.VISUALIZATION_FORMAT}', dpi={settings.VISUALIZATION_DPI})
+buf.seek(0)
+"""
+        
+        # Create the visualization
+        image_data, image_format = create_visualization(code, [])
+        
+        # Encode image as base64 for transmission
+        base64_image = base64.b64encode(image_data).decode('utf-8')
+        
+        return {
+            "image_data": base64_image,
+            "image_type": f"image/{image_format}",
+            "chart_type": "message",
+            "explanation": "No data available for visualization"
+        }
+    
+    def _generate_error_visualization(self, error_message: str) -> Dict[str, Any]:
+        """
+        Generate a visualization indicating an error occurred
+        
+        Args:
+            error_message: Error message to display
+            
+        Returns:
+            Dictionary with visualization data
+        """
+        logger.info("Generating error visualization")
+        
+        # Simple code to create an error visualization
+        code = f"""
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(10, 6))
+plt.text(0.5, 0.5, "Error creating visualization:\\n\\n{error_message}", 
+         horizontalalignment='center', verticalalignment='center',
+         transform=plt.gca().transAxes, fontsize=14, wrap=True,
+         color='darkred')
+plt.axis('off')
+
+# Save to buffer
+buf = buffer  # Use the buffer provided in the execution environment
+plt.savefig(buf, format='{settings.VISUALIZATION_FORMAT}', dpi={settings.VISUALIZATION_DPI})
+buf.seek(0)
+"""
         
         try:
-            # Generate a very simple bar chart as fallback
-            import matplotlib.pyplot as plt
-            import pandas as pd
-            import io
+            # Create the visualization
+            image_data, image_format = create_visualization(code, [])
             
-            # Convert data to DataFrame
-            df = pd.DataFrame(data)
-            
-            if len(df) == 0 or len(df.columns) == 0:
-                # If no data, create dummy data
-                df = pd.DataFrame({
-                    'Category': ['A', 'B', 'C', 'D', 'E'],
-                    'Value': [5, 7, 3, 9, 4]
-                })
-            
-            # Get numeric columns
-            numeric_cols = df.select_dtypes(include=['number']).columns
-            
-            if len(numeric_cols) > 0:
-                # Use the first numeric column
-                value_col = numeric_cols[0]
-                
-                # Get a category column if possible
-                category_cols = df.select_dtypes(include=['object']).columns
-                if len(category_cols) > 0:
-                    category_col = category_cols[0]
-                    # Limit to top 10 categories for readability
-                    top_data = df.groupby(category_col)[value_col].sum().nlargest(10).reset_index()
-                    
-                    plt.figure(figsize=(10, 6))
-                    plt.bar(top_data[category_col], top_data[value_col])
-                    plt.title(f"Fallback Visualization: {category_col} vs {value_col}")
-                    plt.xlabel(category_col)
-                    plt.ylabel(value_col)
-                    plt.xticks(rotation=45)
-                    plt.tight_layout()
-                else:
-                    # No category column, just plot the numeric column
-                    plt.figure(figsize=(10, 6))
-                    plt.bar(range(len(df)), df[value_col])
-                    plt.title(f"Fallback Visualization: {value_col}")
-                    plt.xlabel("Index")
-                    plt.ylabel(value_col)
-                    plt.tight_layout()
-            else:
-                # No numeric columns, create a count plot of a category
-                if len(df.columns) > 0:
-                    col = df.columns[0]
-                    counts = df[col].value_counts().nlargest(10)
-                    
-                    plt.figure(figsize=(10, 6))
-                    plt.bar(counts.index, counts.values)
-                    plt.title(f"Fallback Visualization: Counts of {col}")
-                    plt.xlabel(col)
-                    plt.ylabel("Count")
-                    plt.xticks(rotation=45)
-                    plt.tight_layout()
-                else:
-                    # Last resort - empty dataframe
-                    plt.figure(figsize=(10, 6))
-                    plt.text(0.5, 0.5, "No data available for visualization", 
-                             horizontalalignment='center', verticalalignment='center',
-                             transform=plt.gca().transAxes)
-                    plt.axis('off')
-            
-            # Save the figure to a bytes buffer
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=settings.VISUALIZATION_DPI)
-            buf.seek(0)
-            
-            # Encode as base64
-            base64_image = base64.b64encode(buf.getvalue()).decode('utf-8')
+            # Encode image as base64 for transmission
+            base64_image = base64.b64encode(image_data).decode('utf-8')
             
             return {
                 "image_data": base64_image,
-                "image_type": "image/png",
-                "chart_type": "fallback_bar_chart",
-                "explanation": "This is a fallback visualization created when the main visualization generation encountered an error."
+                "image_type": f"image/{image_format}",
+                "chart_type": "error",
+                "explanation": f"Error: {error_message}"
             }
-            
         except Exception as e:
-            logger.error(f"Error in fallback visualization: {e}", exc_info=True)
-            
-            # If even the fallback fails, return a message
+            # Last resort - return a minimal response if even the error visualization fails
+            logger.error(f"Failed to create error visualization: {e}")
             return {
                 "image_data": None,
                 "image_type": None,
                 "chart_type": None,
-                "explanation": "Visualization could not be generated due to an error."
+                "explanation": f"Visualization failed: {error_message}"
             }

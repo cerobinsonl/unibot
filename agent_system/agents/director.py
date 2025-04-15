@@ -64,7 +64,9 @@ Your response should:
 2. Emphasize the key insights or actions taken
 3. Avoid technical jargon unless necessary
 4. Include reference to any visualizations if they were created
-5. Ask if the user needs anything else
+5. Use precise numbers and specific information from the retrieved data when available
+6. Do NOT use placeholders like "[Value from Visualization]" - either include the actual value or rephrase without a placeholder
+7. Ask if the user needs anything else
 
 Include FINAL_RESPONSE at the beginning of your message so the system knows this is the final answer.
 
@@ -73,6 +75,10 @@ User request: {user_input}
 Conversation history: {history}
 
 Coordinator response: {coordinator_response}
+
+Retrieved data: {retrieved_data}
+
+Has visualization: {has_visualization}
 
 Please synthesize this information into a final response for the university staff member.
 """
@@ -92,6 +98,7 @@ Please synthesize this information into a final response for the university staf
         history = state.get("history", [])
         current_agent = state.get("current_agent")
         intermediate_steps = state.get("intermediate_steps", [])
+        visualization = state.get("visualization", None)
         
         # Initialize intermediate_steps if it's None
         if intermediate_steps is None:
@@ -100,37 +107,63 @@ Please synthesize this information into a final response for the university staf
         
         # If we're coming from a coordinator, synthesize the final response
         if current_agent and current_agent != "director":
+            # Log the flow
+            logger.info(f"Synthesizing final response from {current_agent} coordinator")
+            
             # Get the most recent intermediate step from the coordinator
             coordinator_responses = [
                 step["output"] for step in intermediate_steps 
                 if step["agent"] == current_agent and step["output"] is not None
             ]
             
+            coordinator_response = ""
             if coordinator_responses:
-                coordinator_response = coordinator_responses[-1]
+                last_response = coordinator_responses[-1]
                 
                 # Convert to string if it's a dictionary
-                if isinstance(coordinator_response, dict):
-                    coordinator_response = json.dumps(coordinator_response)
-                
-                # Synthesize the final response
-                formatted_history = self._format_history_for_prompt(history)
-                
-                # Format the prompt with the required values
-                formatted_prompt = self.synthesis_prompt.format(
-                    user_input=user_input,
-                    history=formatted_history,
-                    coordinator_response=coordinator_response
-                )
-                
-                # Invoke the LLM with the formatted prompt
-                response = self.llm.invoke(formatted_prompt).content
-                
-                # Update state
-                state["response"] = response
-                state["current_agent"] = "director"
-                
-                return state
+                if isinstance(last_response, dict):
+                    coordinator_response = json.dumps(last_response)
+                else:
+                    coordinator_response = str(last_response)
+            
+            # Look for retrieved data (especially from SQL queries)
+            retrieved_data = "No specific data retrieved."
+            for step in intermediate_steps:
+                if step["agent"] == "sql_agent" and "output" in step and step["output"] is not None:
+                    sql_result = step["output"]
+                    if isinstance(sql_result, dict) and "results" in sql_result:
+                        if sql_result["results"]:
+                            # Get the first few results to include in the prompt
+                            retrieved_data = json.dumps(sql_result["results"][:3], indent=2)
+                        else:
+                            retrieved_data = "Query executed successfully but returned no results."
+            
+            # Check if there's a visualization
+            has_visualization = "Yes" if visualization else "No"
+            
+            # Synthesize the final response
+            formatted_history = self._format_history_for_prompt(history)
+            
+            # Format the prompt with the required values
+            formatted_prompt = self.synthesis_prompt.format(
+                user_input=user_input,
+                history=formatted_history,
+                coordinator_response=coordinator_response,
+                retrieved_data=retrieved_data,
+                has_visualization=has_visualization
+            )
+            
+            # Invoke the LLM with the formatted prompt
+            response = self.llm.invoke(formatted_prompt).content
+            
+            # Log the synthesis result
+            logger.info(f"Synthesized response: {response[:100]}...")
+            
+            # Update state
+            state["response"] = response
+            state["current_agent"] = "director"
+            
+            return state
         
         # Initial processing of user request
         try:
@@ -158,7 +191,7 @@ Please synthesize this information into a final response for the university staf
             return state
             
         except Exception as e:
-            logger.error(f"Error in Director Agent: {e}")
+            logger.error(f"Error in Director Agent: {e}", exc_info=True)
             error_response = f"FINAL_RESPONSE\nI apologize, but I encountered an error processing your request. Please try again or contact support if the issue persists."
             state["response"] = error_response
             return state
