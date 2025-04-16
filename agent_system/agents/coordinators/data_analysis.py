@@ -109,7 +109,18 @@ Create a comprehensive response synthesizing all this information.
             user_input = state.get("user_input", "")
             intermediate_steps = state.get("intermediate_steps", [])
             
+            # Get the visualization_requested flag if present, but handle case where it isn't
+            visualization_requested = False
+            if "visualization_requested" in state:
+                visualization_requested = state["visualization_requested"]
+            else:
+                # If the flag isn't present, check keywords in the user input
+                visualization_requested = any(keyword in user_input.lower() for keyword in 
+                    ['chart', 'plot', 'graph', 'visualization', 'visualize', 'visualisation', 
+                    'histogram', 'bar chart', 'show me', 'display'])
+            
             logger.info(f"Data Analysis Coordinator processing: '{user_input}'")
+            logger.info(f"Visualization explicitly requested: {visualization_requested}")
             
             # Step 1: Create a plan for handling the request
             formatted_prompt = self.planning_prompt.format(user_input=user_input)
@@ -202,9 +213,14 @@ Create a comprehensive response synthesizing all this information.
                 "timestamp": self._get_timestamp()
             })
             
-            # Step 4: Create visualization if needed
+            # Step 4: Create visualization if needed and explicitly requested
             visualization_result = None
-            if plan["needs_visualization"]:
+            should_visualize = plan["needs_visualization"] and (visualization_requested or 
+                                                            any(keyword in user_input.lower() for keyword in 
+                                                            ['chart', 'plot', 'graph', 'visualization', 'visualize', 
+                                                            'visualisation', 'histogram', 'bar chart', 'show me', 'display']))
+            
+            if should_visualize:
                 logger.info(f"Creating visualization: {plan['visualization_task']}")
                 
                 visualization_result = self.visualization_agent({
@@ -234,7 +250,7 @@ Create a comprehensive response synthesizing all this information.
                 
                 # Log that we've added visualization to state
                 logger.info("Added visualization to state, image length: " + 
-                           (str(len(visualization_result.get("image_data", ""))) if visualization_result.get("image_data") else "0"))
+                        (str(len(visualization_result.get("image_data", ""))) if visualization_result.get("image_data") else "0"))
             
             # Step 5: Synthesize results
             synthesis_input = {

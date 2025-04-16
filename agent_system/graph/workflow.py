@@ -42,6 +42,8 @@ class GraphState(TypedDict):
     intermediate_steps: List[Dict[str, Any]]
     visualization: Optional[Dict[str, Any]]
     stream: Optional[bool]
+    is_final_response: Optional[bool]  # Add this line
+    visualization_requested: Optional[bool]  # Add this line
 
 def create_workflow(streaming: bool = False) -> StateGraph:
     """
@@ -175,12 +177,28 @@ def create_workflow(streaming: bool = False) -> StateGraph:
         Determine which coordinator should handle the request
         
         Args:
-            state: Current conversation state
+            state: Current state of the conversation
             
         Returns:
             Name of the next node to route to
         """
+        # Copy only the allowed fields to avoid state validation errors
+        allowed_fields = [
+            'user_input', 'session_id', 'history', 'current_agent', 
+            'response', 'intermediate_steps', 'visualization', 'stream'
+        ]
+        
+        # Save any extra fields we want to preserve
+        is_final = state.get("is_final_response", False)
+        viz_requested = state.get("visualization_requested", False)
+        
+        # Extract rest of the information from state
         current_agent = state.get("current_agent")
+        
+        # Check if this is marked as a final response that shouldn't be routed again
+        if is_final:
+            logger.info("Final response detected, ending conversation")
+            return END
         
         # If a current agent is already assigned, return it
         if current_agent and current_agent != "director":
@@ -195,6 +213,9 @@ def create_workflow(streaming: bool = False) -> StateGraph:
             
             if "ROUTE_TO_DATA_ANALYSIS" in response:
                 route_result = "data_analysis"
+                # Add back our saved flags
+                if viz_requested:
+                    state["visualization_requested"] = viz_requested
             elif "ROUTE_TO_COMMUNICATION" in response:
                 route_result = "communication"
             elif "ROUTE_TO_DATA_MANAGEMENT" in response:
@@ -202,11 +223,14 @@ def create_workflow(streaming: bool = False) -> StateGraph:
             elif "ROUTE_TO_INTEGRATION" in response:
                 route_result = "integration"
             elif "FINAL_RESPONSE" in response:
+                # For final responses, clean up the prefix and update the response
+                cleaned_response = re.sub(r'^FINAL_RESPONSE\s*', '', response)
+                state["response"] = cleaned_response
                 route_result = END
             else:
-                # Default to data analysis for now as it's most common
+                # Default to end if no clear routing is found
                 logger.warning(f"No clear routing found in: {response[:100]}...")
-                route_result = "data_analysis"
+                route_result = END
             
             # Record routing decision in tracer
             tracer.record_agent_activity("router", "route", response[:100], {"route_to": route_result})

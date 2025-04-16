@@ -65,10 +65,11 @@ Your response should:
 3. Avoid technical jargon unless necessary
 4. Include reference to any visualizations if they were created
 5. Use precise numbers and specific information from the retrieved data when available
-6. Do NOT use placeholders like "[Value from Visualization]" - either include the actual value or rephrase without a placeholder
-7. Ask if the user needs anything else
+6. DO NOT use placeholders like "[Value from Visualization]" - either include the actual value or rephrase without a placeholder
+7. DO NOT include phrases like "Let me know if you need anything else" or "Is there anything else you'd like to know?"
+8. DO NOT start your response with "FINAL_RESPONSE" or any other prefix tag
 
-Include FINAL_RESPONSE at the beginning of your message so the system knows this is the final answer.
+Provide a direct answer to the university staff member's query without unnecessary formalities.
 
 User request: {user_input}
 
@@ -93,12 +94,19 @@ Please synthesize this information into a final response for the university staf
         Returns:
             Updated state with director's response
         """
+        # Make a copy of the state to avoid modifying shared state
+        working_state = {}
+        for key in ['user_input', 'session_id', 'history', 'current_agent', 
+                    'response', 'intermediate_steps', 'visualization', 'stream']:
+            if key in state:
+                working_state[key] = state[key]
+        
         # Extract information from state
-        user_input = state.get("user_input", "")
-        history = state.get("history", [])
-        current_agent = state.get("current_agent")
-        intermediate_steps = state.get("intermediate_steps", [])
-        visualization = state.get("visualization", None)
+        user_input = working_state.get("user_input", "")
+        history = working_state.get("history", [])
+        current_agent = working_state.get("current_agent")
+        intermediate_steps = working_state.get("intermediate_steps", [])
+        visualization = working_state.get("visualization", None)
         
         # Log the current state for debugging agent communication
         logger.info(f"===== DIRECTOR AGENT STATE =====")
@@ -110,7 +118,7 @@ Please synthesize this information into a final response for the university staf
         # Initialize intermediate_steps if it's None
         if intermediate_steps is None:
             intermediate_steps = []
-            state["intermediate_steps"] = intermediate_steps
+            working_state["intermediate_steps"] = intermediate_steps
         
         # If we're coming from a coordinator, synthesize the final response
         if current_agent and current_agent != "director":
@@ -209,8 +217,16 @@ Please synthesize this information into a final response for the university staf
             logger.info(f"{response[:500]}...")
             
             # Update state
-            state["response"] = response
-            state["current_agent"] = "director"
+            working_state["response"] = response
+            working_state["current_agent"] = "director"
+            
+            # Copy back to original state
+            for key, value in working_state.items():
+                state[key] = value
+                
+            # Set a flag to indicate this is a final response
+            # This is added separately from the working_state to avoid validation errors
+            state["is_final_response"] = True
             
             return state
         
@@ -233,9 +249,14 @@ Please synthesize this information into a final response for the university staf
             logger.info("===== INTENT RESPONSE =====")
             logger.info(response[:500] + "...")
             
+            # Check if visualization is explicitly requested
+            visualization_requested = any(keyword in user_input.lower() for keyword in 
+                ['chart', 'plot', 'graph', 'visualization', 'visualize', 'visualisation', 
+                'histogram', 'bar chart', 'show me', 'display'])
+            
             # Update state
-            state["response"] = response
-            state["current_agent"] = "director"
+            working_state["response"] = response
+            working_state["current_agent"] = "director"
             
             # Add this step to intermediate steps
             intermediate_steps.append({
@@ -246,7 +267,14 @@ Please synthesize this information into a final response for the university staf
                 "timestamp": self._get_timestamp()
             })
             
-            state["intermediate_steps"] = intermediate_steps
+            working_state["intermediate_steps"] = intermediate_steps
+            
+            # Copy back to original state
+            for key, value in working_state.items():
+                state[key] = value
+                
+            # Add visualization_requested flag separately to avoid validation errors
+            state["visualization_requested"] = visualization_requested
             
             # Log the routing decision
             if "ROUTE_TO_DATA_ANALYSIS" in response:
@@ -263,11 +291,16 @@ Please synthesize this information into a final response for the university staf
                 logger.info("No clear routing found in response")
             
             return state
-            
+                
         except Exception as e:
             logger.error(f"Error in Director Agent: {e}", exc_info=True)
-            error_response = f"FINAL_RESPONSE\nI apologize, but I encountered an error processing your request. Please try again or contact support if the issue persists."
-            state["response"] = error_response
+            error_response = f"I apologize, but I encountered an error processing your request. Please try again or contact support if the issue persists."
+            working_state["response"] = error_response
+            
+            # Copy back to original state
+            for key, value in working_state.items():
+                state[key] = value
+                
             return state
     
     def _format_history_for_prompt(self, history: List[Dict[str, str]]) -> str:
