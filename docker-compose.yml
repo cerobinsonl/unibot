@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  # Database service (you mentioned you already have this container)
+  # Included here for reference - comment out if already running
+  postgres:
+    image: postgres:14
+    container_name: university-db
+    environment:
+      POSTGRES_USER: ${DB_USER:-admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+      POSTGRES_DB: ${DB_NAME:-university}
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./db/seeds.sql:/docker-entrypoint-initdb.d/seeds.sql
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - university-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-admin} -d ${DB_NAME:-university}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # FastAPI service
+  api:
+    build: ./api
+    container_name: university-api
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER:-admin}:${DB_PASSWORD:-password}@postgres:5432/${DB_NAME:-university}
+      - AGENT_SERVICE_URL=http://agent-system:8000
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - university-network
+    volumes:
+      - ./api:/app
+    restart: unless-stopped
+
+  # Agent System service
+  agent-system:
+    build: ./agent_system
+    container_name: university-agent-system
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER:-admin}:${DB_PASSWORD:-password}@postgres:5432/${DB_NAME:-university}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+      - LLM_MODEL=${LLM_MODEL:-gemini-pro}
+      - API_DEBUG=${API_DEBUG:-false}
+      - AGENT_DEBUG=${AGENT_DEBUG:-false}
+      - MOCK_EXTERNAL_APIS=${MOCK_EXTERNAL_APIS:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - university-network
+    volumes:
+      - ./agent_system:/app
+    restart: unless-stopped
+
+networks:
+  university-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
