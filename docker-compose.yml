@@ -55,13 +55,29 @@ services:
       - API_DEBUG=${API_DEBUG:-false}
       - AGENT_DEBUG=${AGENT_DEBUG:-false}
       - MOCK_EXTERNAL_APIS=${MOCK_EXTERNAL_APIS:-true}
+      - SMTP_SERVER=mailhog
+      - SMTP_PORT=1025
+      - USE_MAILHOG=true
     depends_on:
       postgres:
         condition: service_healthy
+      mailhog:
+        condition: service_started
     networks:
       - university-network
     volumes:
       - ./agent_system:/app
+    restart: unless-stopped
+
+  # MailHog for email testing
+  mailhog:
+    image: mailhog/mailhog
+    container_name: university-mailhog
+    ports:
+      - "1025:1025"  # SMTP server
+      - "8025:8025"  # Web UI
+    networks:
+      - university-network
     restart: unless-stopped
 
   # Django Frontend
