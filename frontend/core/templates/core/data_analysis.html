@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+{% load static %}
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Data Analysis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap">
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+        integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw=="
+        crossorigin="anonymous" referrerpolicy="no-referrer" />
+
+  <link rel="stylesheet" href="{% static 'core/css/styles.css' %}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-title">AI Assistant</div>
+    <div class="brand-subtitle">Data Management &amp; Analysis</div>
+  </header>
+
+  <div class="container" style="max-width: 800px; margin: 20px auto; padding: 20px; background-color: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1);">
+    <h2>Data Analysis</h2>
+    
+    <div class="analysis-form">
+      <h3>Ask a question about your data</h3>
+      <div style="display: flex; margin-bottom: 20px;">
+        <input type="text" id="analysis-query" placeholder="E.g., 'How many students are enrolled in each department?'" style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 1rem;">
+        <button id="submit-analysis" style="background-color: #8c53ee; color: white; border: none; padding: 0 16px; border-radius: 4px; cursor: pointer; margin-left: 10px;">Analyze</button>
+      </div>
+    </div>
+    
+    <div id="analysis-results" style="min-height: 200px; border: 1px solid #eee; border-radius: 4px; padding: 15px; margin-bottom: 20px; display: none;">
+      <h3>Results</h3>
+      <div id="result-content"></div>
+    </div>
+    
+    <p><a href="{% url 'home' %}" style="color: #8c53ee; text-decoration: none;">&larr; Back to Home</a></p>
+  </div>
+
+  <script>
+    document.getElementById('submit-analysis').addEventListener('click', async () => {
+      const query = document.getElementById('analysis-query').value.trim();
+      if (!query) return;
+      
+      // Show loading
+      const resultsDiv = document.getElementById('analysis-results');
+      resultsDiv.style.display = 'block';
+      document.getElementById('result-content').innerHTML = 'Analyzing...';
+      
+      try {
+        // Generate session ID
+        const sessionId = 'analysis-' + Math.random().toString(36).substring(2, 10);
+        
+        // Send to API
+        const response = await fetch('/api/chatbot/message', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            message: query,
+            session_id: sessionId
+          }),
+        });
+        
+        const data = await response.json();
+        
+        // Display result
+        let resultHTML = `<p>${data.message.replace(/\n/g, '<br>')}</p>`;
+        
+        // Add visualization if available
+        if (data.image_data) {
+          resultHTML += `<img src="data:${data.image_type};base64,${data.image_data}" style="max-width: 100%; margin-top: 20px;">`;
+        }
+        
+        document.getElementById('result-content').innerHTML = resultHTML;
+      } catch (error) {
+        console.error('Error:', error);
+        document.getElementById('result-content').innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
+      }
+    });
+  </script>
+</body>
+</html>

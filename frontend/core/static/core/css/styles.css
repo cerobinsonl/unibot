@@ -1,0 +1,181 @@
+/* --- General Layout --- */
+body {
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+  background-color: #f9fafa;
+  color: #333;
+}
+
+/* --- Barra superior (header) --- */
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+}
+.brand-title {
+  font-size: 1.8rem;
+  color: #6f42c1; /* Violeta */
+}
+.brand-subtitle {
+  font-size: 1rem;
+  color: #999;
+}
+
+/* --- Contenedor de Tarjetas --- */
+.cards-container {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr); /* Changed to 3 columns */
+  gap: 15px; /* Reduced gap */
+  padding: 15px; /* Reduced padding */
+  max-width: 1000px;
+  margin: 0 auto; /* Centra horizontalmente */
+}
+
+/* --- Tarjeta general --- */
+.card {
+  background-color: #fff;
+  border-radius: 8px;
+  padding: 15px; /* Reduced padding */
+  text-align: center;
+  font-weight: 600;
+  color: #fff; /* texto blanco, ver data-service más abajo */
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  transition: 0.3s;
+  cursor: pointer;
+  position: relative; /* Permite posicionar íconos o pseudo-elementos */
+}
+
+/* Ícono interno de la tarjeta */
+.card-icon {
+  font-size: 2rem; /* Reduced from 2.5rem */
+  margin-bottom: 8px; /* Reduced margin */
+}
+
+/* Título y texto en la tarjeta */
+.card h3 {
+  margin: 0 0 5px 0;
+  font-weight: 600;
+  font-size: 1rem; /* Reduced from 1.2rem */
+}
+.card p {
+  font-weight: 400;
+  font-size: 0.8rem; /* Reduced from 0.9rem */
+  margin: 0; /* Remove default margin */
+}
+
+/* Hover */
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  opacity: 0.95;
+}
+
+/* Colores distintos según data-service */
+.card[data-service="data-analysis"] {
+  background-color: #8c53ee; 
+}
+.card[data-service="send-messages"] {
+  background-color: #8066ad; 
+}
+.card[data-service="input-data"] {
+  background-color: #0ca0e6; 
+}
+.card[data-service="extract-data"] {
+  background-color: #ef4343; 
+}
+.card[data-service="create-synthetic-data"] {
+  background-color: #4e47e5; 
+}
+.card[data-service="chatbot"] {
+  background-color: #7542ff; 
+}
+
+/* --- Chatbot Container --- */
+.chatbot-container {
+  width: 80%;
+  margin: 20px auto;
+  background-color: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  padding: 20px;
+  scroll-margin-top: 20px; /* For smooth scrolling to this element */
+}
+.chatbot-container h2 {
+  margin-top: 0;
+  color: #6f42c1;
+}
+.chatbot-messages {
+  min-height: 100px;
+  max-height: 400px;
+  overflow-y: auto;
+  margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid #eee;
+  border-radius: 4px;
+}
+.chatbot-input-container {
+  display: flex;
+  gap: 10px;
+}
+.chatbot-input-container input {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
+}
+.chatbot-input-container button {
+  background-color: #6f42c1;
+  color: white;
+  border: none;
+  padding: 0 16px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.chatbot-input-container button:hover {
+  background-color: #5a329b;
+}
+
+/* --- Message styles --- */
+.message {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border-radius: 5px;
+  max-width: 85%;
+  word-wrap: break-word;
+  position: relative;
+}
+
+.user {
+  background-color: #e3f2fd;
+  margin-left: auto;
+}
+
+.assistant {
+  background-color: #f1f1f1;
+}
+
+.system {
+  background-color: #ffebee;
+  max-width: 100%;
+  text-align: center;
+}
+
+.chat-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 5px;
+  margin: 10px 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* Example prompt links */
+.example-prompt {
+  color: #6f42c1;
+  text-decoration: none;
+  font-weight: 500;
+}
+.example-prompt:hover {
+  text-decoration: underline;
+}

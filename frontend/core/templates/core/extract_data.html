@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+{% load static %}
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Extract Data</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap">
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+        integrity="sha512-99p2INBZePSkIX9ehR7FvVo3jf/bXlXGaL68ybs3CrJbIFIg1w28nIDxw5A=="
+        crossorigin="anonymous" referrerpolicy="no-referrer" />
+
+  <link rel="stylesheet" href="{% static 'core/css/styles.css' %}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-title">AI Assistant</div>
+    <div class="brand-subtitle">Data Management &amp; Analysis</div>
+  </header>
+
+  <div class="container">
+    <h2>Extract Data</h2>
+    <p>
+      Sección para obtener datos de sistemas LMS, SIS o CRM.
+      Aquí podrías presentar opciones para filtrar, seleccionar y descargar datos 
+      usando el microservicio <em>extract_data</em>.
+    </p>
+
+    <!-- Si recibes datos del microservicio vía "data" en la vista -->
+    {% if data.error %}
+      <p style="color: red;">Error: {{ data.error }}</p>
+    {% else %}
+      <pre>{{ data|safe }}</pre>
+    {% endif %}
+
+    <p><a href="{% url 'home' %}">&larr; Volver al Inicio</a></p>
+  </div>
+</body>
+</html>

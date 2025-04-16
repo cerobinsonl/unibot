@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+{% load static %}
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>AI Assistant</title>
+  <!-- Google Fonts (opcional) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap">
+  
+  <!-- Font Awesome para íconos -->
+  <link rel="stylesheet"
+  href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+  integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw=="
+  crossorigin="anonymous" referrerpolicy="no-referrer" />
+  
+  <link rel="stylesheet" href="{% static 'core/css/styles.css' %}">
+</head>
+<body>
+  <!-- Barra superior con dos bloques -->
+  <header class="topbar">
+    <div class="brand-title">AI Assistant</div>
+    <div class="brand-subtitle">Data Management &amp; Analysis</div>
+  </header>
+
+  <!-- Contenedor de las tarjetas -->
+  <section class="cards-container">
+    <div class="card" data-service="data-analysis">
+      <div class="card-icon">
+        <i class="fa-solid fa-database"></i>
+      </div>
+      <h3>Data Analysis</h3>
+      <p>Analyze and visualize your data</p>
+    </div>
+
+    <div class="card" data-service="send-messages">
+      <div class="card-icon">
+        <i class="fa-solid fa-message"></i>
+      </div>
+      <h3>Send Messages</h3>
+      <p>Communication tools for teams</p>
+    </div>
+
+    <div class="card" data-service="input-data">
+      <div class="card-icon">
+        <i class="fa-solid fa-file-import"></i>
+      </div>
+      <h3>Input Data</h3>
+      <p>Add new information to systems</p>
+    </div>
+
+    <div class="card" data-service="extract-data">
+      <div class="card-icon">
+        <i class="fa-solid fa-calendar"></i>
+      </div>
+      <h3>Extract Data</h3>
+      <p>Get data from LMS, SIS, or CRM</p>
+    </div>
+
+    <div class="card" data-service="create-synthetic-data">
+      <div class="card-icon">
+        <i class="fa-solid fa-users"></i>
+      </div>
+      <h3>Create Synthetic Data</h3>
+      <p>Generate realistic student data</p>
+    </div>
+
+    <div class="card" data-service="chatbot">
+      <div class="card-icon">
+        <i class="fa-solid fa-robot"></i>
+      </div>
+      <h3>Chatbot</h3>
+      <p>AI assistant interaction</p>
+    </div>
+  </section>
+
+  <!-- Caja del chatbot -->
+  <section class="chatbot-container">
+    <h2>Chatbot</h2>
+    <div class="chatbot-messages">
+      <p>Hello! I'm your AI assistant. How can I help you today?</p>
+    </div>
+    <div class="chatbot-input-container">
+      <input type="text" placeholder="Type your message..." />
+      <button>Send</button>
+    </div>
+  </section>
+
+  <!-- Modal for example prompts -->
+  <div id="modal-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000;">
+    <div id="modal-content" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 8px; max-width: 600px; width: 90%;">
+      <h3 id="modal-title">Example Prompts</h3>
+      <div id="modal-body">
+        <!-- Example prompts will be inserted here -->
+      </div>
+      <div style="margin-top: 20px; display: flex; justify-content: space-between;">
+        <button id="use-prompt-btn" style="background-color: #6f42c1; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Use this prompt</button>
+        <button id="close-modal-btn" style="background-color: #f1f1f1; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Close</button>
+      </div>
+    </div>
+  </div>
+  
+  <script>
+    // Get DOM elements
+    const messagesContainer = document.querySelector('.chatbot-messages');
+    const userInput = document.querySelector('.chatbot-input-container input');
+    const sendButton = document.querySelector('.chatbot-input-container button');
+    
+    // Generate a random session ID
+    const sessionId = 'session-' + Math.random().toString(36).substring(2, 10);
+    
+    // Example prompts for each card type
+    const examplePrompts = {
+      'data-analysis': [
+        "How many students are enrolled in each department?",
+        "What is the average GPA of students in the Computer Science program?",
+        "Show me a chart of financial aid distribution by aid type",
+        "Compare enrollment numbers between Fall 2023 and Spring 2024"
+      ],
+      'send-messages': [
+        "Send an email to all students in the Biology department about the upcoming workshop",
+        "Notify faculty members about the schedule change for next week",
+        "Send a reminder about the financial aid deadline to all eligible students"
+      ],
+      'input-data': [
+        "Add a new person with FirstName=John, LastName=Doe, EmailAddress=john.doe@example.com",
+        "Update phone number for student with ID 12345 to 555-123-4567",
+        "Register a new course called Advanced Machine Learning with code CS450"
+      ],
+      'extract-data': [
+        "Extract the list of courses from the Learning Management System",
+        "Get the financial aid information for the current academic year",
+        "Show current enrollment statistics from the Student Information System"
+      ],
+      'create-synthetic-data': [
+        "Generate 50 synthetic student records with varied GPA distributions",
+        "Create sample financial aid data for testing the visualization system",
+        "Generate synthetic enrollment data for the past 5 years to test trend analysis"
+      ],
+      'chatbot': [
+        "Tell me about the university's financial aid options",
+        "What are the enrollment statistics for this semester?",
+        "How many students are on academic probation?",
+        "Generate a visualization of student demographics"
+      ]
+    };
+    
+    // Add event listeners
+    sendButton.addEventListener('click', sendMessage);
+    userInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendMessage();
+    });
+    
+    // Add card click handlers
+    document.querySelectorAll('.card').forEach(card => {
+        card.addEventListener('click', () => {
+            const service = card.getAttribute('data-service');
+            
+            // Show modal with example prompts
+            showExamplePrompts(service);
+        });
+    });
+    
+    function showExamplePrompts(service) {
+        const modal = document.getElementById('modal-overlay');
+        const modalTitle = document.getElementById('modal-title');
+        const modalBody = document.getElementById('modal-body');
+        const usePromptBtn = document.getElementById('use-prompt-btn');
+        const closeModalBtn = document.getElementById('close-modal-btn');
+        
+        // Convert service-name to Service Name
+        const formattedName = service.split('-').map(word => 
+            word.charAt(0).toUpperCase() + word.slice(1)
+        ).join(' ');
+        
+        // Set modal title
+        modalTitle.textContent = `${formattedName} Examples`;
+        
+        // Create list of example prompts
+        let promptsHtml = '<p>Choose one of these example prompts or use as inspiration:</p><ul>';
+        examplePrompts[service].forEach(prompt => {
+            promptsHtml += `<li><a href="#" class="example-prompt">${prompt}</a></li>`;
+        });
+        promptsHtml += '</ul>';
+        
+        modalBody.innerHTML = promptsHtml;
+        
+        // Add click handlers to prompt examples
+        modalBody.querySelectorAll('.example-prompt').forEach(promptLink => {
+            promptLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                // Set the prompt in the chatbot input
+                document.querySelector('.chatbot-input-container input').value = promptLink.textContent;
+                // Close the modal
+                modal.style.display = 'none';
+                // Scroll to chatbot
+                document.querySelector('.chatbot-container').scrollIntoView({ behavior: 'smooth' });
+                // Focus the input
+                document.querySelector('.chatbot-input-container input').focus();
+            });
+        });
+        
+        // Set up close button
+        closeModalBtn.onclick = () => {
+            modal.style.display = 'none';
+        };
+        
+        // Set up use prompt button
+        usePromptBtn.onclick = () => {
+            // Get the first example and use it
+            const firstExample = examplePrompts[service][0];
+            document.querySelector('.chatbot-input-container input').value = firstExample;
+            modal.style.display = 'none';
+            document.querySelector('.chatbot-container').scrollIntoView({ behavior: 'smooth' });
+            document.querySelector('.chatbot-input-container input').focus();
+        };
+        
+        // Show the modal
+        modal.style.display = 'block';
+        
+        // Close modal when clicking outside
+        modal.onclick = (e) => {
+            if (e.target === modal) {
+                modal.style.display = 'none';
+            }
+        };
+    }
+    
+    function sendMessage() {
+        const message = userInput.value.trim();
+        if (!message) return;
+        
+        // Add user message to the chat
+        addMessage('user', message);
+        userInput.value = '';
+        
+        // Send to backend
+        fetch('/api/chatbot/message', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                message: message,
+                session_id: sessionId
+            }),
+        })
+        .then(response => response.json())
+        .then(data => {
+            // Process response to remove FINAL_RESPONSE and format markdown
+            let processedMessage = data.message;
+            
+            // Remove FINAL_RESPONSE prefix
+            processedMessage = processedMessage.replace(/^FINAL_RESPONSE\s*/i, '');
+            
+            // Add the processed message to the chat
+            addFormattedMessage('assistant', processedMessage);
+            
+            // If there's an image, display it
+            if (data.image_data) {
+                addImage(data.image_data, data.image_type);
+            }
+        })
+        .catch((error) => {
+            console.error('Error:', error);
+            addMessage('system', 'Error: Could not get response');
+        });
+    }
+    
+    function addMessage(role, content) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${role}`;
+        messageDiv.textContent = content;
+        messagesContainer.appendChild(messageDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        
+        // Also scroll the chatbot container into view if needed
+        document.querySelector('.chatbot-container').scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+    
+    function addFormattedMessage(role, content) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${role}`;
+        
+        // Remove common ending phrases
+        const endingPhrases = [
+            /Let me know if you need anything else\./i,
+            /Do you need anything else\?/i,
+            /Is there anything else you'd like to know\?/i,
+            /Can I help you with anything else\?/i,
+            /Would you like me to explain anything else\?/i,
+            /Please let me know if you need further assistance\./i
+        ];
+        
+        for (const phrase of endingPhrases) {
+            content = content.replace(phrase, '');
+        }
+        
+        // Trim any leftover whitespace
+        content = content.trim();
+        
+        // Simple markdown-like formatting
+        // Convert ** to bold
+        content = content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        
+        // Convert * to italic
+        content = content.replace(/\*(.*?)\*/g, '<em>$1</em>');
+        
+        // Convert newlines to <br>
+        content = content.replace(/\n/g, '<br>');
+        
+        // Handle tables (simple implementation)
+        if (content.includes('|')) {
+            const lines = content.split('<br>');
+            let isTable = false;
+            let tableHtml = '<table style="width:100%; border-collapse: collapse; margin: 10px 0;">';
+            let tableContent = '';
+            
+            for (let line of lines) {
+                if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
+                    if (!isTable) {
+                        isTable = true;
+                    }
+                    
+                    // Skip separator rows (contain only dashes and pipes)
+                    if (!/^[\|\-\s]+$/.test(line)) {
+                        const cells = line.split('|').filter(cell => cell !== '');
+                        tableContent += '<tr>';
+                        cells.forEach(cell => {
+                            tableContent += `<td style="border: 1px solid #ddd; padding: 8px;">${cell.trim()}</td>`;
+                        });
+                        tableContent += '</tr>';
+                    }
+                } else if (isTable) {
+                    // End of table
+                    isTable = false;
+                    tableHtml += tableContent + '</table>';
+                    
+                    // Replace the table content in the original string
+                    const tablePattern = /\|.*(\n|\<br\>).*\|/gs;
+                    content = content.replace(tablePattern, tableHtml);
+                    tableContent = '';
+                }
+            }
+            
+            if (isTable) {
+                tableHtml += tableContent + '</table>';
+                const tablePattern = /\|.*(\n|\<br\>).*\|/gs;
+                content = content.replace(tablePattern, tableHtml);
+            }
+        }
+        
+        messageDiv.innerHTML = content;
+        messagesContainer.appendChild(messageDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        
+        // Also scroll the container
+        document.querySelector('.chatbot-container').scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+    
+    function addImage(imageData, imageType) {
+        const imgElement = document.createElement('img');
+        imgElement.src = `data:${imageType};base64,${imageData}`;
+        imgElement.className = 'chat-image';
+        imgElement.style.maxWidth = '100%';
+        imgElement.style.height = 'auto';
+        imgElement.style.marginTop = '10px';
+        imgElement.style.borderRadius = '5px';
+        imgElement.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)';
+        
+        messagesContainer.appendChild(imgElement);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        
+        // Also scroll the container
+        document.querySelector('.chatbot-container').scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  </script>
+</body>
+</html>

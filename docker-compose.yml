@@ -1,8 +1,7 @@
 version: '3.8'
 
 services:
-  # Database service (you mentioned you already have this container)
-  # Included here for reference - comment out if already running
+  # Database service
   postgres:
     image: postgres:14
     container_name: university-db
@@ -63,6 +62,24 @@ services:
       - university-network
     volumes:
       - ./agent_system:/app
+    restart: unless-stopped
+
+  # Django Frontend
+  frontend:
+    build: ./frontend
+    container_name: university-frontend
+    environment:
+      - DEBUG=true
+      - SECRET_KEY=your-secret-key-here
+      - AGENT_API_URL=http://api:8080
+    ports:
+      - "8000:8000"
+    depends_on:
+      - api
+    networks:
+      - university-network
+    volumes:
+      - ./frontend:/app
     restart: unless-stopped
 
 networks:
