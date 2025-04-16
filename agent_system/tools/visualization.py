@@ -65,8 +65,14 @@ def create_visualization(code: str, data: List[Dict[str, Any]]) -> Tuple[bytes, 
         # Reset buffer position
         buf.seek(0)
         
+        # Get the image data
+        image_data = buf.getvalue()
+        
+        # Print debug info
+        print(f"Generated visualization with size: {len(image_data)} bytes")
+        
         # Return the image data
-        return buf.getvalue(), settings.VISUALIZATION_FORMAT
+        return image_data, settings.VISUALIZATION_FORMAT
     
     except Exception as e:
         logger.error(f"Error creating visualization: {e}")

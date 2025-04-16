@@ -8,6 +8,7 @@ from config import settings, AGENT_CONFIGS, get_llm
 
 # Import specialists
 from agents.specialists.data_entry_agent import DataEntryAgent
+from agents.specialists.synthetic_agent import SyntheticAgent  # Import the SyntheticAgent
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ class DataManagementCoordinator:
         
         # Initialize specialist agents
         self.data_entry_agent = DataEntryAgent()
+        self.synthetic_agent = SyntheticAgent()  # Add the synthetic agent
         
         # Create the task planning prompt
         # NOTE: All JSON example curly braces are escaped by doubling them {{ }}
@@ -37,6 +39,7 @@ You need to create a plan for handling this data management request. Determine w
 1. INSERT - Add new records to the database
 2. UPDATE - Modify existing records
 3. DELETE - Remove records (usually soft delete by changing status)
+4. GENERATE - Create synthetic data for testing or demonstration purposes
 
 IMPORTANT GUIDELINES:
 - Our system uses a table called "Person" to store all people-related information, including students, faculty, and staff.
@@ -44,13 +47,16 @@ IMPORTANT GUIDELINES:
 - Key fields in the Person table include: "FirstName", "LastName", "EmailAddress", "PhoneNumber", "Gender", "DateOfBirth"
 - Pay close attention to correct casing of table and column names.
 - For student-specific operations, the "Person" table is used along with role-specific tables.
+- For GENERATE operations, determine if this is a request for synthetic data generation.
+- For GENERATE operations, you should set "use_temp_table" to true to use temporary tables and avoid modifying production data.
 
 Format your response as a JSON object with these keys:
-- operation_type: "insert", "update", or "delete"
+- operation_type: "insert", "update", "delete", or "generate"
 - table: Target table name (use actual table names from the database)
 - data: Data structure to insert or update (key-value pairs)
 - condition: For updates and deletes, the condition to identify records
 - validation_rules: Rules that the data must satisfy
+- record_count: For generate operations, how many records to create
 
 Example for an insert:
 {{
@@ -68,16 +74,18 @@ Example for an insert:
   ]
 }}
 
-Example for an update:
+Example for synthetic data generation:
 {{
-  "operation_type": "update",
+  "operation_type": "generate",
   "table": "Person",
+  "record_count": 50,
   "data": {{
-    "PhoneNumber": "555-987-6543"
+    "specific_requirements": "varied GPA distributions",
+    "use_temp_table": true
   }},
-  "condition": "EmailAddress = 'jsmith@example.edu'",
   "validation_rules": [
-    "Person must exist with the specified email"
+    "Records should have realistic data",
+    "Foreign key relationships must be maintained"
   ]
 }}
 
@@ -161,11 +169,16 @@ Create a response summarizing the action taken.
                 condition_match = re.search(r'"condition"\s*:\s*"([^"]+)"', planning_response)
                 condition = condition_match.group(1) if condition_match else None
                 
+                # Try to extract record count for generate operations
+                record_count_match = re.search(r'"record_count"\s*:\s*(\d+)', planning_response)
+                record_count = int(record_count_match.group(1)) if record_count_match else 10
+                
                 plan = {
                     "operation_type": op_type,
                     "table": table,
                     "data": data,
-                    "condition": condition
+                    "condition": condition,
+                    "record_count": record_count
                 }
             
             # Add planning step to intermediate steps
@@ -177,33 +190,68 @@ Create a response summarizing the action taken.
                 "timestamp": self._get_timestamp()
             })
             
-            # Step 2: Execute the data operation
-            operation_result = self.data_entry_agent({
-                "operation_type": plan["operation_type"],
-                "table": plan["table"],
-                "data": plan["data"],
-                "condition": plan.get("condition")
-            })
+            # Step 2: Execute the data operation based on type
+            operation_result = None
             
-            # Add operation step to intermediate steps
-            intermediate_steps.append({
-                "agent": "data_entry_agent",
-                "action": f"execute_{plan['operation_type']}",
-                "input": {
+            if plan["operation_type"] == "generate":
+                # This is a synthetic data generation request
+                logger.info(f"Handling synthetic data generation request for {plan.get('record_count', 10)} records")
+                
+                # Call the synthetic agent
+                operation_result = self.synthetic_agent({
+                    "user_input": user_input,
                     "table": plan["table"],
-                    "data": "Data object"  # Don't log full data for privacy/brevity
-                },
-                "output": operation_result,
-                "timestamp": self._get_timestamp()
-            })
+                    "record_count": plan.get("record_count", 10),
+                    "specific_requirements": plan.get("data", {}).get("specific_requirements", ""),
+                    "use_temp_table": plan.get("data", {}).get("use_temp_table", True)  # Default to using temp tables
+                })
+                
+                # Add synthetic data generation step to intermediate steps
+                intermediate_steps.append({
+                    "agent": "synthetic_agent",
+                    "action": "generate_data",
+                    "input": {
+                        "table": plan["table"],
+                        "record_count": plan.get("record_count", 10)
+                    },
+                    "output": operation_result,
+                    "timestamp": self._get_timestamp()
+                })
+                
+                # Update affected records count for synthesis
+                affected_records = operation_result.get("executed_count", 0)
+                
+            else:
+                # Handle regular data operations (insert, update, delete)
+                operation_result = self.data_entry_agent({
+                    "operation_type": plan["operation_type"],
+                    "table": plan["table"],
+                    "data": plan["data"],
+                    "condition": plan.get("condition")
+                })
+                
+                # Add operation step to intermediate steps
+                intermediate_steps.append({
+                    "agent": "data_entry_agent",
+                    "action": f"execute_{plan['operation_type']}",
+                    "input": {
+                        "table": plan["table"],
+                        "data": "Data object"  # Don't log full data for privacy/brevity
+                    },
+                    "output": operation_result,
+                    "timestamp": self._get_timestamp()
+                })
+                
+                # Update affected records count for synthesis
+                affected_records = operation_result.get("affected_rows", 0)
             
             # Step 3: Synthesize results
             synthesis_input = {
                 "user_input": user_input,
                 "operation_type": plan["operation_type"],
                 "table": plan["table"],
-                "affected_records": operation_result.get("affected_rows", 0),
-                "result": operation_result.get("message", "Operation completed successfully.")
+                "affected_records": affected_records,
+                "result": operation_result.get("message", "Operation completed.")
             }
             
             formatted_prompt = self.synthesis_prompt.format(**synthesis_input)

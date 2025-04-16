@@ -82,6 +82,9 @@ Please generate the visualization code based on this information.
             column_names = input_data.get("column_names", [])
             analysis = input_data.get("analysis", {})
             
+            logger.info(f"Creating visualization with task: {task[:100]}...")
+            logger.info(f"Data has {len(data)} records and {len(column_names)} columns")
+            
             # Check if data is empty or insufficient
             if not data or len(data) < 1:
                 logger.warning(f"Insufficient data for visualization: {len(data) if data else 0} records")
@@ -114,14 +117,17 @@ Please generate the visualization code based on this information.
                 chart_type = response_json.get("chart_type", "unknown")
                 explanation = response_json.get("explanation", "")
             except json.JSONDecodeError:
+                logger.warning("Failed to parse visualization response as JSON, attempting regex extraction")
                 # If not valid JSON, try to extract code using regex
                 code_match = re.search(r'```python\s*(.*?)\s*```', content, re.DOTALL)
                 if code_match:
                     code = code_match.group(1)
+                    logger.info("Successfully extracted code using ```python``` pattern")
                 else:
                     # Last attempt to find Python code
                     code_match = re.search(r'import matplotlib|import seaborn|import plotly(.*?)(?:```|$)', content, re.DOTALL)
                     code = code_match.group(0) if code_match else ""
+                    logger.info("Attempted extraction using import pattern")
                 
                 chart_type = "unknown"
                 explanation = "Visualization code extracted from non-JSON response"
@@ -134,18 +140,45 @@ Please generate the visualization code based on this information.
             logger.debug(f"Visualization code: {code[:500]}...")
             
             # Create the visualization using the extracted code
+            logger.info("Executing visualization code...")
             image_data, image_format = create_visualization(code, data)
             
+            # Check if we have valid image data
+            if not image_data or len(image_data) == 0:
+                logger.error("No image data returned from create_visualization")
+                return self._generate_error_visualization("Failed to generate visualization: No image data returned")
+            
+            logger.info(f"Generated image data with size: {len(image_data)} bytes, format: {image_format}")
+            
             # Encode image as base64 for transmission
-            base64_image = base64.b64encode(image_data).decode('utf-8')
+            try:
+                base64_image = base64.b64encode(image_data).decode('utf-8')
+                logger.info(f"Successfully encoded image to base64, length: {len(base64_image)}")
+                
+                # Validate the base64 string (to detect corruption)
+                try:
+                    # Just to validate the base64 is correct
+                    test_decode = base64.b64decode(base64_image)
+                    logger.info(f"Base64 validation successful, decoded length: {len(test_decode)}")
+                except Exception as validate_error:
+                    logger.error(f"Base64 validation failed: {validate_error}")
+                    # Use a fallback visualization if the encoding is invalid
+                    return self._generate_error_visualization(f"Base64 encoding error: {validate_error}")
+                
+            except Exception as encoding_error:
+                logger.error(f"Error encoding image to base64: {encoding_error}")
+                return self._generate_error_visualization(f"Image encoding error: {encoding_error}")
             
             # Return the visualization
-            return {
+            result = {
                 "image_data": base64_image,
                 "image_type": f"image/{image_format}",
                 "chart_type": chart_type,
                 "explanation": explanation
             }
+            
+            logger.info(f"Returning visualization result with keys: {list(result.keys())}")
+            return result
             
         except Exception as e:
             logger.error(f"Error in Visualization Agent: {e}", exc_info=True)
@@ -202,24 +235,24 @@ buf.seek(0)
         Returns:
             Dictionary with visualization data
         """
-        logger.info("Generating error visualization")
+        logger.info(f"Generating error visualization with message: {error_message}")
         
         # Simple code to create an error visualization
         code = f"""
-import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt
 
-plt.figure(figsize=(10, 6))
-plt.text(0.5, 0.5, "Error creating visualization:\\n\\n{error_message}", 
-         horizontalalignment='center', verticalalignment='center',
-         transform=plt.gca().transAxes, fontsize=14, wrap=True,
-         color='darkred')
-plt.axis('off')
+    plt.figure(figsize=(10, 6))
+    plt.text(0.5, 0.5, "Error creating visualization:\\n\\n{error_message}", 
+            horizontalalignment='center', verticalalignment='center',
+            transform=plt.gca().transAxes, fontsize=14, wrap=True,
+            color='darkred')
+    plt.axis('off')
 
-# Save to buffer
-buf = buffer  # Use the buffer provided in the execution environment
-plt.savefig(buf, format='{settings.VISUALIZATION_FORMAT}', dpi={settings.VISUALIZATION_DPI})
-buf.seek(0)
-"""
+    # Save to buffer
+    buf = buffer  # Use the buffer provided in the execution environment
+    plt.savefig(buf, format='{settings.VISUALIZATION_FORMAT}', dpi={settings.VISUALIZATION_DPI})
+    buf.seek(0)
+    """
         
         try:
             # Create the visualization
@@ -227,6 +260,7 @@ buf.seek(0)
             
             # Encode image as base64 for transmission
             base64_image = base64.b64encode(image_data).decode('utf-8')
+            logger.info(f"Generated error visualization with base64 length: {len(base64_image)}")
             
             return {
                 "image_data": base64_image,

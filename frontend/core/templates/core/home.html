@@ -235,6 +235,13 @@
         addMessage('user', message);
         userInput.value = '';
         
+        // Show a loading indicator
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = 'message system';
+        loadingDiv.textContent = "Processing your request...";
+        messagesContainer.appendChild(loadingDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        
         // Send to backend
         fetch('/api/chatbot/message', {
             method: 'POST',
@@ -246,8 +253,18 @@
                 session_id: sessionId
             }),
         })
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok: ' + response.status);
+            }
+            return response.json();
+        })
         .then(data => {
+            // Remove loading indicator
+            messagesContainer.removeChild(loadingDiv);
+            
+            console.log("Response data:", data);
+            
             // Process response to remove FINAL_RESPONSE and format markdown
             let processedMessage = data.message;
             
@@ -259,12 +276,18 @@
             
             // If there's an image, display it
             if (data.image_data) {
-                addImage(data.image_data, data.image_type);
+                console.log("Image data received, length:", data.image_data.length);
+                addImage(data.image_data, data.image_type || 'image/png');
+            } else {
+                console.log("No image data in response");
             }
         })
         .catch((error) => {
+            // Remove loading indicator
+            messagesContainer.removeChild(loadingDiv);
+            
             console.error('Error:', error);
-            addMessage('system', 'Error: Could not get response');
+            addMessage('system', 'Error: Could not get response: ' + error.message);
         });
     }
     
@@ -375,6 +398,58 @@
         // Also scroll the container
         document.querySelector('.chatbot-container').scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
+
+    function addImage(imageData, imageType) {
+        if (!imageData) {
+            console.error("No image data received");
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'message system';
+            errorDiv.textContent = "Visualization could not be displayed: No image data received";
+            messagesContainer.appendChild(errorDiv);
+            return;
+        }
+        
+        console.log("Received image data of length: " + imageData.length);
+        console.log("Image type: " + imageType);
+        
+        try {
+            const imgElement = document.createElement('img');
+            imgElement.src = `data:${imageType};base64,${imageData}`;
+            imgElement.className = 'chat-image';
+            imgElement.style.maxWidth = '100%';
+            imgElement.style.height = 'auto';
+            imgElement.style.marginTop = '10px';
+            imgElement.style.borderRadius = '5px';
+            imgElement.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)';
+            
+            // Add an error handler to detect if image fails to load
+            imgElement.onerror = function() {
+                console.error("Error loading image");
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'message system';
+                errorDiv.textContent = "Visualization could not be displayed: Error loading image";
+                messagesContainer.appendChild(errorDiv);
+            };
+            
+            // Add a load handler to confirm successful loading
+            imgElement.onload = function() {
+                console.log("Image loaded successfully");
+            };
+            
+            messagesContainer.appendChild(imgElement);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            
+            // Also scroll the container
+            document.querySelector('.chatbot-container').scrollIntoView({ behavior: 'smooth', block: 'end' });
+        } catch (e) {
+            console.error("Error rendering image:", e);
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'message system';
+            errorDiv.textContent = "Visualization could not be displayed: " + e.message;
+            messagesContainer.appendChild(errorDiv);
+        }
+    }
+
   </script>
 </body>
 </html>
