@@ -67,13 +67,17 @@ FROM "FinancialAid";
 -- 5. Insertar datos en la tabla FinancialAidAward
 --------------------------------------------------------
 -- Se asigna un premio (o beneficio) a cada registro de ayuda financiera.
-INSERT INTO "FinancialAidAward" ("FinancialAidId", "AwardName", "AwardAmount", "AwardDate")
+-- Financial aid will only be granted to students who have at least one award
+INSERT INTO "FinancialAid" ("PersonId", "ApplicationDate", "AidType", "AmountRequested", "AmountGranted", "Status")
 SELECT
-  "FinancialAidId",
-  'Award for person ' || "PersonId",
- round((500 + random() * 1500)::numeric, 2) AS "AwardAmount",
-  CURRENT_DATE - (random() * 90)::int * interval '1 day' AS "AwardDate"
-FROM "FinancialAid";
+    sar."PersonId",
+    CURRENT_DATE - (random() * 180)::int * interval '1 day' AS "ApplicationDate",
+    CASE WHEN random() < 0.5 THEN 'Scholarship' ELSE 'Loan' END AS "AidType",
+    round((1000 + random() * 4000)::numeric, 2)::float8 AS "AmountRequested",
+    round((500 + random() * 2000)::numeric, 2)::float8 AS "AmountGranted",
+    CASE WHEN random() < 0.7 THEN 'Approved' ELSE 'Pending' END AS "Status"
+FROM "PsStudentAcademicAward" saa
+JOIN "PsStudentAcademicRecord" sar ON saa."StudentAcademicRecordId" = sar."StudentAcademicRecordId";
 
 --------------------------------------------------------
 -- 6. Insertar datos en la tabla PsStudentAcademicRecord
@@ -94,11 +98,11 @@ FROM "Person";
 -- Se asigna un premio académico a cada registro académico.
 INSERT INTO "PsStudentAcademicAward" ("StudentAcademicRecordId", "AwardTitle", "AwardDate")
 SELECT 
-  "StudentAcademicRecordId",
-  'Academic Excellence Award',
-  CURRENT_DATE - (random() * 60)::int * interval '1 day' AS "AwardDate"
-FROM "PsStudentAcademicRecord";
-
+    sar."StudentAcademicRecordId",
+    'Academic Excellence Award',
+    CURRENT_DATE - (random() * 60)::int * interval '1 day' AS "AwardDate"
+FROM "PsStudentAcademicRecord" sar
+WHERE sar."GPA" >= 3.5 AND sar."AcademicStanding" = 'Good';
 --------------------------------------------------------
 -- 8. Insertar datos en la tabla PsStudentEmergencyContact
 --------------------------------------------------------

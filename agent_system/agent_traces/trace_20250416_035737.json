@@ -1,0 +1,78 @@
+{
+  "start_time": "2025-04-16T03:57:37.270559",
+  "agents": {
+    "director": {
+      "actions": [
+        {
+          "action": "start",
+          "timestamp": "2025-04-16T03:57:43.874621",
+          "input": "Add a new student to the database its name is John Doe and its email is john.doe@university.edu",
+          "output": null
+        },
+        {
+          "action": "complete",
+          "timestamp": "2025-04-16T03:57:44.564700",
+          "input": "Add a new student to the database its name is John Doe and its email is john.doe@university.edu",
+          "output": {
+            "user_input": "Add a new student to the database its name is John Doe and its email is john.doe@university.edu",
+            "session_id": "test-session",
+            "history": [],
+            "current_agent": null,
+            "response": "FINAL_RESPONSE\nI apologize, but I encountered an error processing your request. Please try again or contact support if the issue persists.",
+            "intermediate_steps": [],
+            "visualization": null,
+            "stream": null
+          }
+        }
+      ],
+      "first_seen": "2025-04-16T03:57:43.874612"
+    },
+    "router": {
+      "actions": [
+        {
+          "action": "route",
+          "timestamp": "2025-04-16T03:57:44.579984",
+          "input": "FINAL_RESPONSE\nI apologize, but I encountered an error processing your request. Please try again or ",
+          "output": {
+            "route_to": "__end__"
+          }
+        }
+      ],
+      "first_seen": "2025-04-16T03:57:44.579974"
+    }
+  },
+  "messages": [
+    {
+      "agent": "director",
+      "action": "start",
+      "timestamp": "2025-04-16T03:57:43.874621"
+    },
+    {
+      "agent": "director",
+      "action": "complete",
+      "timestamp": "2025-04-16T03:57:44.564700"
+    },
+    {
+      "agent": "router",
+      "action": "route",
+      "timestamp": "2025-04-16T03:57:44.579984"
+    }
+  ],
+  "visualization_created": false,
+  "state_updates": [
+    {
+      "timestamp": "2025-04-16T03:57:44.562019",
+      "user_input": "Add a new student to the database its name is John Doe and its email is john.doe@university.edu",
+      "current_agent": null,
+      "has_response": true,
+      "has_visualization": false,
+      "step_count": 0
+    }
+  ],
+  "end_time": "2025-04-16T03:57:44.584364",
+  "final_state": {
+    "has_response": true,
+    "has_visualization": false,
+    "visualization_in_api_response": null
+  }
+}

@@ -27,6 +27,7 @@ class DataManagementCoordinator:
         self.data_entry_agent = DataEntryAgent()
         
         # Create the task planning prompt
+        # NOTE: All JSON example curly braces are escaped by doubling them {{ }}
         self.planning_prompt = """
 You are the Data Management Coordinator for a university administrative system.
 Your responsibility is to oversee all database operations including data entry and updates.
@@ -37,46 +38,48 @@ You need to create a plan for handling this data management request. Determine w
 2. UPDATE - Modify existing records
 3. DELETE - Remove records (usually soft delete by changing status)
 
+IMPORTANT GUIDELINES:
+- Our system uses a table called "Person" to store all people-related information, including students, faculty, and staff.
+- When adding a new student, use the "Person" table, NOT a "students" table.
+- Key fields in the Person table include: "FirstName", "LastName", "EmailAddress", "PhoneNumber", "Gender", "DateOfBirth"
+- Pay close attention to correct casing of table and column names.
+- For student-specific operations, the "Person" table is used along with role-specific tables.
+
 Format your response as a JSON object with these keys:
 - operation_type: "insert", "update", or "delete"
-- table: Target table name
+- table: Target table name (use actual table names from the database)
 - data: Data structure to insert or update (key-value pairs)
 - condition: For updates and deletes, the condition to identify records
 - validation_rules: Rules that the data must satisfy
 
 Example for an insert:
-{
+{{
   "operation_type": "insert",
-  "table": "students",
-  "data": {
-    "first_name": "Jane",
-    "last_name": "Smith",
-    "email": "jsmith@example.edu",
-    "major_id": 5,
-    "enrollment_date": "2023-09-01",
-    "status": "active"
-  },
+  "table": "Person",
+  "data": {{
+    "FirstName": "Jane",
+    "LastName": "Smith",
+    "EmailAddress": "jsmith@example.edu",
+    "Gender": "Female",
+    "PhoneNumber": "555-123-4567"
+  }},
   "validation_rules": [
-    "email must be unique",
-    "major_id must exist in departments table"
+    "EmailAddress must be unique"
   ]
-}
+}}
 
 Example for an update:
-{
+{{
   "operation_type": "update",
-  "table": "students",
-  "data": {
-    "status": "graduated",
-    "graduation_date": "2023-05-15"
-  },
-  "condition": "student_id = 1234",
+  "table": "Person",
+  "data": {{
+    "PhoneNumber": "555-987-6543"
+  }},
+  "condition": "EmailAddress = 'jsmith@example.edu'",
   "validation_rules": [
-    "graduation_date must be after enrollment_date"
+    "Person must exist with the specified email"
   ]
-}
-
-Important: Ensure the data follows the database schema structure and maintain data integrity.
+}}
 
 User request: {user_input}
 """
@@ -142,7 +145,7 @@ Create a response summarizing the action taken.
                 op_type = op_type_match.group(1) if op_type_match else "insert"
                 
                 table_match = re.search(r'"table"\s*:\s*"([^"]+)"', planning_response)
-                table = table_match.group(1) if table_match else "students"
+                table = table_match.group(1) if table_match else "Person"
                 
                 # Try to extract data object
                 data_match = re.search(r'"data"\s*:\s*(\{[^}]+\})', planning_response)

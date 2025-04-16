@@ -3,7 +3,6 @@ from typing import Dict, List, Any, Optional
 import json
 import re
 import os
-import random
 
 # Import database tools
 from tools.database import DatabaseConnection
@@ -28,88 +27,11 @@ class DataEntryAgent:
         # Initialize database connection
         self.db = DatabaseConnection(settings.DATABASE_URL)
         
-        # For the POC, include database schema information in the prompt
-        # In production, this would be dynamically fetched
-        self.schema_info = """
-PostgreSQL Database Schema for University Administration:
-
--- Students Table
-CREATE TABLE students (
-    student_id SERIAL PRIMARY KEY,
-    first_name VARCHAR(100) NOT NULL,
-    last_name VARCHAR(100) NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    date_of_birth DATE,
-    gender VARCHAR(50),
-    address TEXT,
-    phone VARCHAR(20),
-    enrollment_date DATE,
-    major_id INTEGER REFERENCES departments(department_id),
-    graduation_date DATE,
-    status VARCHAR(20) CHECK (status IN ('active', 'inactive', 'graduated', 'leave of absence'))
-);
-
--- Faculty Table
-CREATE TABLE faculty (
-    faculty_id SERIAL PRIMARY KEY,
-    first_name VARCHAR(100) NOT NULL,
-    last_name VARCHAR(100) NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    department_id INTEGER REFERENCES departments(department_id),
-    position VARCHAR(100),
-    hire_date DATE,
-    phone VARCHAR(20),
-    status VARCHAR(20) CHECK (status IN ('active', 'on leave', 'retired', 'terminated'))
-);
-
--- Departments Table
-CREATE TABLE departments (
-    department_id SERIAL PRIMARY KEY,
-    name VARCHAR(100) UNIQUE NOT NULL,
-    code VARCHAR(10) UNIQUE NOT NULL,
-    chair_id INTEGER,
-    building VARCHAR(100),
-    budget DECIMAL(15, 2),
-    established_date DATE
-);
-
--- Courses Table
-CREATE TABLE courses (
-    course_id SERIAL PRIMARY KEY,
-    code VARCHAR(20) UNIQUE NOT NULL,
-    title VARCHAR(255) NOT NULL,
-    description TEXT,
-    department_id INTEGER REFERENCES departments(department_id),
-    credits INTEGER,
-    level VARCHAR(20) CHECK (level IN ('undergraduate', 'graduate'))
-);
-
--- Sections Table (Course offerings)
-CREATE TABLE sections (
-    section_id SERIAL PRIMARY KEY,
-    course_id INTEGER REFERENCES courses(course_id),
-    faculty_id INTEGER REFERENCES faculty(faculty_id),
-    semester VARCHAR(20),
-    year INTEGER,
-    room VARCHAR(50),
-    schedule VARCHAR(100),
-    capacity INTEGER,
-    status VARCHAR(20) CHECK (status IN ('open', 'closed', 'cancelled'))
-);
-
--- Enrollments Table
-CREATE TABLE enrollments (
-    enrollment_id SERIAL PRIMARY KEY,
-    student_id INTEGER REFERENCES students(student_id),
-    section_id INTEGER REFERENCES sections(section_id),
-    enrollment_date DATE,
-    grade VARCHAR(2),
-    status VARCHAR(20) CHECK (status IN ('active', 'dropped', 'completed'))
-);
-"""
+        # Dynamically fetch the database schema on initialization
+        self.schema_info = self._get_database_schema()
         
         # Create SQL generation prompt for data operations
-        self.sql_prompt = f"""
+        self.sql_prompt = """
 You are the Data Entry Agent for a university administrative system.
 Your specialty is safely inserting and updating data in the university database.
 
@@ -119,37 +41,126 @@ You need to create a SQL statement for a database operation. Your task is to:
 2. Ensure the SQL follows PostgreSQL syntax
 3. Include data validation checks where appropriate
 4. Handle potential NULL values correctly
-5. Use parameterized queries for safety
+5. Use literal values directly in the SQL (not parameterized queries with $1, $2, etc.)
 
 University Database Schema:
-{self.schema_info}
+{schema_info}
 
-Format your response as a JSON object with these keys:
-- sql: The PostgreSQL statement to execute
-- explanation: Brief explanation of what the operation does and any validation
-- validation_warnings: Any potential data issues that should be checked
+IMPORTANT GUIDELINES:
+1. This is the ACTUAL schema from the database - use ONLY these tables and columns.
+2. Always use double quotes around table and column names: "TableName"."ColumnName".
+3. Only operate on tables that exist in the schema provided.
+4. If you cannot perform the operation with the available schema, explain what's missing.
+5. Never invent or assume tables or columns that aren't in the schema.
+6. The database is PostgreSQL.
+7. Pay close attention to the actual table and column names in the schema.
+8. For INSERT operations, identify the correct table and columns from the schema.
+9. For UPDATE and DELETE operations, ensure the condition is specific enough.
+10. If the requested table doesn't exist, LOOK FOR AN APPROPRIATE ALTERNATIVE (e.g., use "Person" for student data).
+11. DO NOT use parameterized queries with $1, $2, etc. Instead, include the actual values directly:
+    - For strings: INSERT INTO "Person" ("FirstName") VALUES ('John')
+    - For numbers: INSERT INTO "Table" ("NumericColumn") VALUES (123)
+    - For nulls: INSERT INTO "Table" ("Column") VALUES (NULL)
 
-Example for INSERT:
+Operation type: {operation_type}
+Table: {table}
+Data: {data}
+Condition: {condition}
+
+Reply with a JSON object containing:
+- "sql": The PostgreSQL statement to execute
+- "explanation": Brief explanation of what the operation does
+- "validation_warnings": Any potential data issues that should be checked
+- "actual_table": The actual table name being used (which may differ from the requested table if corrections were made)
+
+For example:
 {{
-  "sql": "INSERT INTO students (first_name, last_name, email, enrollment_date, status) VALUES (:first_name, :last_name, :email, :enrollment_date, :status)",
-  "explanation": "This statement inserts a new student record with the provided information",
-  "validation_warnings": ["Ensure email is unique", "Check that enrollment_date is not in the future"]
+  "sql": "INSERT INTO \\"Person\\" (\\"FirstName\\", \\"LastName\\", \\"EmailAddress\\") VALUES ('John', 'Doe', 'john.doe@example.com')",
+  "explanation": "Adding a new person record with name and email information",
+  "validation_warnings": ["Ensure email is unique"],
+  "actual_table": "Person"
 }}
-
-Example for UPDATE:
-{{
-  "sql": "UPDATE students SET status = :status, graduation_date = :graduation_date WHERE student_id = :student_id",
-  "explanation": "This statement updates a student's status and graduation date",
-  "validation_warnings": ["Verify student_id exists", "Ensure graduation_date is after enrollment_date"]
-}}
-
-Operation type: {{operation_type}}
-Table: {{table}}
-Data: {{data}}
-Condition: {{condition}}
-
-Please generate the appropriate SQL statement.
 """
+    
+    def _get_database_schema(self) -> str:
+        """
+        Dynamically retrieve and format the database schema
+        
+        Returns:
+            Formatted database schema as a string
+        """
+        schema_info = []
+        try:
+            # Get all tables in the database
+            tables = self.db.get_tables()
+            logger.info(f"Found {len(tables)} tables in the database: {', '.join(tables)}")
+            
+            # For each table, get its schema definition
+            for table in tables:
+                columns = self.db.get_table_schema(table)
+                
+                # Format as CREATE TABLE statement
+                table_def = f'CREATE TABLE "{table}" (\n'
+                
+                column_defs = []
+                for column in columns:
+                    col_name = column.get("column_name", "")
+                    data_type = column.get("data_type", "")
+                    max_length = column.get("character_maximum_length")
+                    is_nullable = column.get("is_nullable", "YES")
+                    
+                    # Format column type with length if applicable
+                    if max_length and data_type == 'character varying':
+                        data_type = f"VARCHAR({max_length})"
+                    
+                    # Format nullable constraint
+                    null_constraint = "NULL" if is_nullable == "YES" else "NOT NULL"
+                    
+                    # Add to columns list
+                    column_defs.append(f'    "{col_name}" {data_type} {null_constraint}')
+                
+                table_def += ",\n".join(column_defs)
+                table_def += "\n);"
+                
+                schema_info.append(table_def)
+                
+            return "\n\n".join(schema_info)
+        
+        except Exception as e:
+            logger.error(f"Error retrieving database schema: {e}")
+            # If we can't get the schema dynamically, return a basic description
+            return """
+CREATE TABLE "Person" (
+    "PersonId" SERIAL PRIMARY KEY,
+    "FirstName" VARCHAR(100) NOT NULL,
+    "LastName" VARCHAR(100) NOT NULL,
+    "EmailAddress" VARCHAR(255),
+    "DateOfBirth" DATE NULL,
+    "Gender" VARCHAR(20) NULL,
+    "PhoneNumber" VARCHAR(50) NULL,
+    "CreatedOn" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+    def _clean_json_response(self, response: str) -> str:
+        """
+        Clean the JSON response from the LLM by removing markdown formatting
+        
+        Args:
+            response: Raw response from the LLM
+            
+        Returns:
+            Cleaned JSON string
+        """
+        # Remove markdown code block markers if present
+        response = re.sub(r'^```json\s*', '', response)
+        response = re.sub(r'^```\s*', '', response)
+        response = re.sub(r'\s*```$', '', response)
+        
+        # Remove any leading/trailing whitespace
+        response = response.strip()
+        
+        return response
     
     def __call__(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -181,8 +192,13 @@ Please generate the appropriate SQL statement.
             if operation_type in ["insert", "update"] and not data:
                 raise ValueError(f"{operation_type.capitalize()} operation requires data")
             
+            # Log key information
+            logger.info(f"Attempting {operation_type} operation on table '{table}'")
+            logger.info(f"Data keys: {list(data.keys())}")
+            
             # Generate SQL for the operation
             formatted_prompt = self.sql_prompt.format(
+                schema_info=self.schema_info,
                 operation_type=operation_type,
                 table=table,
                 data=json.dumps(data),
@@ -190,19 +206,35 @@ Please generate the appropriate SQL statement.
             )
             
             sql_response = self.llm.invoke(formatted_prompt).content
+            logger.info(f"SQL generation response: {sql_response[:500]}")
             
             # Parse the response
             try:
+                # Clean the response by removing markdown formatting
+                cleaned_response = self._clean_json_response(sql_response)
+                logger.info(f"Cleaned JSON response: {cleaned_response[:500]}")
+                
                 # Try to parse as JSON
-                parsed = json.loads(sql_response)
+                parsed = json.loads(cleaned_response)
                 sql_statement = parsed.get("sql", "")
                 explanation = parsed.get("explanation", "")
                 validation_warnings = parsed.get("validation_warnings", [])
-            except json.JSONDecodeError:
+                actual_table = parsed.get("actual_table", table)
+                
+                # Log the extracted SQL statement
+                logger.info(f"Extracted SQL statement: {sql_statement}")
+                
+                # Log the table correction if it happened
+                if actual_table != table:
+                    logger.info(f"Table corrected from '{table}' to '{actual_table}'")
+            except json.JSONDecodeError as json_err:
+                logger.error(f"JSON parse error: {json_err} - Response: {cleaned_response[:500]}")
+                
                 # Extract SQL using regex if not valid JSON
-                match = re.search(r'```sql\s*(.*?)\s*```', sql_response, re.DOTALL)
-                if match:
-                    sql_statement = match.group(1)
+                sql_match = re.search(r'"sql"\s*:\s*"([^"]+)"', sql_response)
+                if sql_match:
+                    sql_statement = sql_match.group(1)
+                    logger.info(f"Extracted SQL using regex: {sql_statement}")
                 else:
                     # Last resort, try to find anything that looks like SQL
                     if operation_type == "insert":
@@ -213,37 +245,81 @@ Please generate the appropriate SQL statement.
                         match = re.search(r'DELETE FROM\s+.*?;', sql_response, re.DOTALL | re.IGNORECASE)
                     
                     sql_statement = match.group(0) if match else ""
+                    logger.info(f"Extracted SQL using pattern matching: {sql_statement}")
                 
                 explanation = "SQL extracted from non-JSON response."
                 validation_warnings = []
+                actual_table = table
             
-            # In a real implementation, this would execute the actual SQL
-            # For the POC, we'll just simulate database operations
-            if os.getenv("MOCK_DB_OPERATIONS", "true").lower() == "true" or not sql_statement:
-                # Mock database operation
-                affected_rows = random.randint(1, 5)
-                status = "success"
-                message = f"Successfully {operation_type}ed {affected_rows} row(s)"
-            else:
-                # Execute the SQL
-                # This is commented out for safety in the POC
-                # result = self.db.execute_query(sql_statement)
-                # affected_rows = result.rowcount
-                # status = "success"
-                # message = f"Successfully {operation_type}ed {affected_rows} row(s)"
-                raise NotImplementedError("Real database operations not enabled for safety")
+            # Check if we have a valid SQL statement
+            if not sql_statement:
+                logger.error(f"No valid SQL statement generated. LLM response: {sql_response[:500]}")
+                
+                # Check if there's an explanation about table not existing
+                table_explanation = None
+                if "table" in sql_response.lower() and "not exist" in sql_response.lower():
+                    # Try to extract explanation
+                    expl_match = re.search(r'(The table.*?not exist.*?\.)', sql_response, re.DOTALL | re.IGNORECASE)
+                    if expl_match:
+                        table_explanation = expl_match.group(1)
+                
+                return {
+                    "status": "error",
+                    "message": f"Could not generate valid SQL statement. {table_explanation or 'The requested table or columns may not exist in the database.'}",
+                    "operation_type": operation_type,
+                    "table": table,
+                    "affected_rows": 0,
+                    "sql": None
+                }
             
-            # Return the results
-            return {
-                "status": status,
-                "message": message,
-                "operation_type": operation_type,
-                "table": table,
-                "affected_rows": affected_rows,
-                "sql": sql_statement,
-                "explanation": explanation,
-                "validation_warnings": validation_warnings
-            }
+            # Execute the SQL
+            try:
+                # Only execute if it's a supported operation
+                if operation_type == "insert" or operation_type == "update" or operation_type == "delete":
+                    # First check if the statement is an authorized type
+                    cleaned_query = re.sub(r'^\s*(--.*?\n)*\s*', '', sql_statement, flags=re.DOTALL).strip().upper()
+                    if (operation_type == "insert" and cleaned_query.startswith("INSERT")) or \
+                       (operation_type == "update" and cleaned_query.startswith("UPDATE")) or \
+                       (operation_type == "delete" and cleaned_query.startswith("DELETE")):
+                        
+                        logger.info(f"Executing SQL: {sql_statement}")
+                        
+                        # Execute the statement
+                        with self.db.engine.connect() as connection:
+                            from sqlalchemy import text
+                            result = connection.execute(text(sql_statement))
+                            connection.commit()
+                            affected_rows = result.rowcount
+                            
+                            logger.info(f"SQL executed successfully. Affected rows: {affected_rows}")
+                    else:
+                        raise ValueError(f"SQL statement type does not match requested operation: {operation_type}")
+                else:
+                    raise ValueError(f"Unsupported operation type: {operation_type}")
+                
+                # Return the results
+                return {
+                    "status": "success",
+                    "message": f"Successfully {operation_type}ed {affected_rows} row(s) in table '{actual_table}'",
+                    "operation_type": operation_type,
+                    "table": actual_table,
+                    "affected_rows": affected_rows,
+                    "sql": sql_statement,
+                    "explanation": explanation,
+                    "validation_warnings": validation_warnings
+                }
+            except Exception as db_error:
+                logger.error(f"Database error executing statement: {db_error}")
+                return {
+                    "status": "error",
+                    "message": f"Database error: {str(db_error)}",
+                    "operation_type": operation_type,
+                    "table": actual_table,
+                    "affected_rows": 0,
+                    "sql": sql_statement,
+                    "explanation": explanation,
+                    "validation_warnings": validation_warnings
+                }
             
         except Exception as e:
             logger.error(f"Error in Data Entry Agent: {e}", exc_info=True)
