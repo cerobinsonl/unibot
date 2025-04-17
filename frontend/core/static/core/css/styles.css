@@ -92,15 +92,6 @@ body {
 }
 
 /* --- Chatbot Container --- */
-.chatbot-container {
-  width: 80%;
-  margin: 20px auto;
-  background-color: #ffffff;
-  border-radius: 8px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
-  padding: 20px;
-  scroll-margin-top: 20px; /* For smooth scrolling to this element */
-}
 .chatbot-container h2 {
   margin-top: 0;
   color: #6f42c1;
@@ -162,12 +153,30 @@ body {
   text-align: center;
 }
 
+/* Enhanced visualization styles */
+.chat-image-container {
+  width: 100%;
+  margin: 10px 0;
+  padding: 5px;
+  background-color: #f9f9f9;
+  border-radius: 5px;
+  text-align: center;
+  transition: all 0.3s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
 .chat-image {
   max-width: 100%;
   height: auto;
   border-radius: 5px;
-  margin: 10px 0;
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  transition: all 0.3s ease;
+}
+
+.chat-image:hover {
+  transform: scale(1.02);
+  box-shadow: 0 3px 6px rgba(0,0,0,0.15);
+  cursor: pointer;
 }
 
 /* Example prompt links */
@@ -178,4 +187,55 @@ body {
 }
 .example-prompt:hover {
   text-decoration: underline;
+}
+
+/* Visualization loading spinner */
+.visualization-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  color: #666;
+}
+
+.visualization-loading::after {
+  content: "";
+  width: 20px;
+  height: 20px;
+  border: 2px solid #ccc;
+  border-top: 2px solid #6f42c1;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-left: 10px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .cards-container {
+    grid-template-columns: 1fr;
+  }
+  
+  .chatbot-container {
+    width: 95%;
+  }
+  
+  .message {
+    max-width: 95%;
+  }
+} 
+
+.chatbot-container
+{
+  width: 80%;
+  margin: 20px auto;
+  background-color: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  padding: 20px;
+  scroll-margin-top: 20px; /* For smooth scrolling to this element */
 }

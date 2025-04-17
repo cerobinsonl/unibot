@@ -67,6 +67,7 @@ services:
       - university-network
     volumes:
       - ./agent_system:/app
+      - ./visual_debug:/app/visual_debug
     restart: unless-stopped
 
   # MailHog for email testing

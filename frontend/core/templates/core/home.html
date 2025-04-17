@@ -108,11 +108,11 @@
       'data-analysis': [
         "How many students are enrolled in each department?",
         "What is the average GPA of students in the Computer Science program?",
-        "Show me a chart of financial aid distribution by aid type",
-        "Compare enrollment numbers between Fall 2023 and Spring 2024"
+        "Give me a table of the student that are on the Dean's List",
+        "What is the average GPA per program?"
       ],
       'send-messages': [
-        "Send an email to all students in the Biology department about the upcoming workshop",
+        "Send an email to all students in the Biology program about the upcoming workshop",
         "Notify faculty members about the schedule change for next week",
         "Send a message to all students that are in probation to invite them to a workshop."
       ],
@@ -128,8 +128,7 @@
       ],
       'create-synthetic-data': [
         "Generate 50 synthetic student records with varied GPA distributions",
-        "Create sample financial aid data for testing the visualization system",
-        "Generate synthetic enrollment data for the past 5 years to test trend analysis"
+        "Create sample financial aid data for testing the visualization system"
       ]
     };
     
@@ -386,6 +385,11 @@
         document.querySelector('.chatbot-container').scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
 
+    /**
+     * Add an image to the chat
+     * @param {string} imageData - Base64 encoded image data
+     * @param {string} imageType - MIME type of the image
+     */
     function addImage(imageData, imageType) {
         if (!imageData) {
             console.error("No image data received");
@@ -400,33 +404,52 @@
         console.log("Image type: " + imageType);
         
         try {
+            // Create a container for the image that will allow for proper styling
+            const imageContainer = document.createElement('div');
+            imageContainer.className = 'chat-image-container';
+            imageContainer.style.width = '100%';
+            imageContainer.style.margin = '10px 0';
+            imageContainer.style.textAlign = 'center';
+            
+            // Create the image element
             const imgElement = document.createElement('img');
             imgElement.src = `data:${imageType};base64,${imageData}`;
             imgElement.className = 'chat-image';
             imgElement.style.maxWidth = '100%';
             imgElement.style.height = 'auto';
-            imgElement.style.marginTop = '10px';
             imgElement.style.borderRadius = '5px';
             imgElement.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)';
+            
+            // Add a loading indicator
+            const loadingDiv = document.createElement('div');
+            loadingDiv.textContent = "Loading visualization...";
+            loadingDiv.style.padding = '10px';
+            loadingDiv.style.fontSize = '14px';
+            loadingDiv.style.color = '#666';
+            imageContainer.appendChild(loadingDiv);
             
             // Add an error handler to detect if image fails to load
             imgElement.onerror = function() {
                 console.error("Error loading image");
-                const errorDiv = document.createElement('div');
-                errorDiv.className = 'message system';
-                errorDiv.textContent = "Visualization could not be displayed: Error loading image";
-                messagesContainer.appendChild(errorDiv);
+                loadingDiv.textContent = "Visualization could not be displayed. Please try again.";
+                loadingDiv.style.color = 'red';
             };
             
             // Add a load handler to confirm successful loading
             imgElement.onload = function() {
                 console.log("Image loaded successfully");
+                // Remove the loading indicator once the image is loaded
+                imageContainer.removeChild(loadingDiv);
             };
             
-            messagesContainer.appendChild(imgElement);
+            // Add the image to the container
+            imageContainer.appendChild(imgElement);
+            
+            // Add the container to the chat
+            messagesContainer.appendChild(imageContainer);
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
             
-            // Also scroll the container
+            // Also scroll the container into view
             document.querySelector('.chatbot-container').scrollIntoView({ behavior: 'smooth', block: 'end' });
         } catch (e) {
             console.error("Error rendering image:", e);

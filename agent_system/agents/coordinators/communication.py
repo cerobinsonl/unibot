@@ -113,7 +113,6 @@ Create a response summarizing the action taken.
                 plan = json.loads(planning_response)
                 plan["content"] = plan["content"].replace('\\n', '<br>').replace('\r\n', '<br>').replace('\n', '<br>')
             except json.JSONDecodeError:
-                
                 # If the response isn't valid JSON, extract what we can
                 import re
                 
@@ -346,13 +345,10 @@ Create a response summarizing the action taken.
                 # Extract potential email addresses from results
                 emails_found = 0
                 for row in results:
-                    # Detailed logging for each row
-                    logger.debug(f"Processing row: {row}")
                     for key, value in row.items():
                         if isinstance(value, str) and "@" in value:
                             recipients.append(value)
                             emails_found += 1
-                            logger.debug(f"Found email in column {key}: {value}")
                 
                 logger.info(f"Extracted {emails_found} email addresses from query results")
                 

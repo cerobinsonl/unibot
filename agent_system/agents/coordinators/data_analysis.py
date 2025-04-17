@@ -42,6 +42,14 @@ You need to create a plan for handling this data analysis request. Break it down
 2. Analysis Agent - What analysis should be performed on this data?
 3. Visualization Agent - What visualization would best represent this data?
 
+IMPORTANT GUIDELINES:
+- Do not make assumptions about database structure - SQL Agent will determine the appropriate tables and columns
+- Avoid hardcoding column names or table names in your instructions
+- For SQL tasks, focus on describing what data is needed, not how to query it
+- For analysis tasks, describe the insights needed, not specific column operations
+- For visualization tasks, describe what should be visualized, not how to code it
+- Let each specialist agent determine how to implement their tasks based on the actual data structure
+
 Format your response as a JSON object with these keys:
 - sql_task: Detailed description of what the SQL Agent should do
 - analysis_task: Detailed description of what the Analysis Agent should do  
@@ -50,13 +58,11 @@ Format your response as a JSON object with these keys:
 
 Example:
 {{
-  "sql_task": "Retrieve student enrollment counts by department for the last academic year",
-  "analysis_task": "Calculate department growth rates compared to previous year and identify top 5 growing departments",
-  "visualization_task": "Create a bar chart showing enrollment by department with growth indicators",
+  "sql_task": "Retrieve student enrollment counts broken down by academic department for the current academic year",
+  "analysis_task": "Analyze the enrollment distribution across departments. Calculate the percentage of total enrollment for each department and identify departments with significant enrollment changes.",
+  "visualization_task": "Create a visualization showing the distribution of enrollment across departments. Use an appropriate chart type that makes it easy to compare department sizes.",
   "needs_visualization": true
 }}
-
-Important: Make your descriptions specific and detailed so each specialized agent knows exactly what to do.
 
 User request: {user_input}
 """
@@ -195,7 +201,8 @@ Create a comprehensive response synthesizing all this information.
             analysis_result = self.analysis_agent({
                 "task": plan["analysis_task"],
                 "data": sql_result["results"],
-                "column_names": sql_result["column_names"]
+                "column_names": sql_result["column_names"],
+                "row_count": sql_result["row_count"]  # Add row count information
             })
             
             # Log the analysis summary
@@ -216,9 +223,10 @@ Create a comprehensive response synthesizing all this information.
             # Step 4: Create visualization if needed and explicitly requested
             visualization_result = None
             should_visualize = plan["needs_visualization"] and (visualization_requested or 
-                                                            any(keyword in user_input.lower() for keyword in 
-                                                            ['chart', 'plot', 'graph', 'visualization', 'visualize', 
-                                                            'visualisation', 'histogram', 'bar chart', 'show me', 'display']))
+                                                          any(keyword in user_input.lower() for keyword in 
+                                                          ['chart', 'plot', 'graph', 'visualization', 'visualize', 
+                                                          'visualisation', 'histogram', 'bar chart', 'show me', 'display',
+                                                          'distribution', 'breakdown', 'trend']))
             
             if should_visualize:
                 logger.info(f"Creating visualization: {plan['visualization_task']}")
@@ -227,7 +235,8 @@ Create a comprehensive response synthesizing all this information.
                     "task": plan["visualization_task"],
                     "data": sql_result["results"],
                     "column_names": sql_result["column_names"],
-                    "analysis": analysis_result
+                    "analysis": analysis_result,
+                    "query": sql_result["query"]  # Add the original query for context
                 })
                 
                 # Log visualization creation result
@@ -248,9 +257,15 @@ Create a comprehensive response synthesizing all this information.
                 # Add visualization to state
                 state["visualization"] = visualization_result
                 
-                # Log that we've added visualization to state
-                logger.info("Added visualization to state, image length: " + 
-                        (str(len(visualization_result.get("image_data", ""))) if visualization_result.get("image_data") else "0"))
+                # Ensure visualization is properly added to state
+                if "visualization" not in state or state["visualization"] is None:
+                    state["visualization"] = visualization_result
+                
+                # Double check that image_data exists
+                if "image_data" not in visualization_result or not visualization_result["image_data"]:
+                    logger.error("Visualization result missing image_data")
+                else:
+                    logger.info(f"Visualization added to state with image_data length: {len(visualization_result['image_data'])}")
             
             # Step 5: Synthesize results
             synthesis_input = {

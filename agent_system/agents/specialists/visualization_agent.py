@@ -1,13 +1,14 @@
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 import json
 import base64
 import io
 import os
 import re
-
-# Import visualization tools
-from tools.visualization import create_visualization
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # Import configuration
 from config import settings, AGENT_CONFIGS, get_llm
@@ -31,38 +32,49 @@ class VisualizationAgent:
 You are the Visualization Agent for a university administrative system.
 Your specialty is creating clear, insightful visualizations using Python libraries.
 
-You need to create a Python code snippet that generates a visualization based on provided data.
+You need to create a Python code snippet that defines a function to generate a visualization based on provided data,
+and then immediately calls that function at the end of the snippet.
 
-The code should:
-1. Use matplotlib, seaborn, or plotly
-2. Create a clear, informative visualization appropriate for the data
-3. Include proper titles, labels, and legends
-4. Use a professional color scheme suitable for university reporting
-5. Handle any data transformation needed for visualization
-6. Save the plot to a BytesIO object for display
+IMPORTANT DATA INFORMATION:
+{dataframe_info}
 
-IMPORTANT: 
-- Use ONLY the data provided to you
-- Do NOT assume or generate data that doesn't exist in the input
-- If the data is empty or has very few records, create a simple message visualization stating "No data available" or "Insufficient data"
-- Use ONLY these libraries: matplotlib, seaborn, pandas, numpy
+TASK:
+{task}
 
-Format your response as a JSON object with these keys:
-- chart_type: The type of chart you're creating (e.g., "bar", "line", "scatter", "pie")
-- code: The Python code that will generate the visualization
-- explanation: Brief explanation of why this visualization is appropriate
-
-Your code will receive a pandas DataFrame called 'df' with column names as provided.
-
-Visualization task: {task}
-
-Column names: {column_names}
-
-Data sample: {data_sample}
+Column names available: {column_names}
 
 Analysis summary: {analysis_summary}
 
-Please generate the visualization code based on this information.
+The code should:
+1. Define a function (e.g., `create_visualization(data, buffer)`) that:
+   - Accepts a pandas DataFrame (`data`) and a BytesIO object (`buffer`).
+   - Performs any necessary data validation and transformation.
+   - Uses matplotlib, seaborn, or plotly to build the appropriate chart.
+   - Sets titles, labels, legends, and a professional color scheme.
+   - Saves the figure to the provided `buffer` using `plt.savefig(buffer, format='png', dpi=100)`, then `buffer.seek(0)`.
+2. After the function definition, call that function once using the variables `data` (the DataFrame) and `buffer` (the BytesIO).
+3. **DO NOT** generate something like this: 
+    # Example usage (assuming 'data' DataFrame and 'buffer' BytesIO are defined)
+    import pandas as pd
+    import io
+    
+    # Create a sample DataFrame (replace with your actual data)
+    data = pd.DataFrame({'GPA': [3.2, 3.5, 3.8, 2.9, 3.1, 3.3, 3.6, 4.0, 2.5, 3.9] * 100})
+    
+    # Create a BytesIO buffer
+    buffer = io.BytesIO()
+
+GUIDELINES:
+- Use only the actual column names from `{column_names}`.
+- Include error handling for missing or invalid data.
+- Ensure the function is self-contained and executable.
+
+FORMAT YOUR RESPONSE AS JSON with keys:
+- `chart_type`: The type of chart ("bar", "histogram", etc.)
+- `code`: The full Python snippet, including the function definition and its invocation.
+- `explanation`: Brief rationale for the chosen visualization and function structure.
+
+Do not include any usage beyond the single function call at the end.
 """
     
     def __call__(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -90,8 +102,18 @@ Please generate the visualization code based on this information.
                 logger.warning(f"Insufficient data for visualization: {len(data) if data else 0} records")
                 return self._generate_no_data_visualization("No data available for visualization.")
             
+            # Convert to DataFrame for easier inspection
+            df = pd.DataFrame(data)
+            
+            # Log data info
+            logger.info(f"DataFrame info: {len(df)} rows × {len(df.columns)} columns")
+            logger.info(f"DataFrame columns: {list(df.columns)}")
+            
+            # Prepare dataframe information for the LLM
+            dataframe_info = self._prepare_dataframe_info(df)
+            
             # Prepare data sample for prompt (limit to 5 rows for brevity)
-            data_sample = str(data[:5])
+            data_sample = str(data[:5] if len(data) > 5 else data)
             
             # Get analysis summary if available
             analysis_summary = analysis.get("summary", "No analysis summary provided")
@@ -101,19 +123,45 @@ Please generate the visualization code based on this information.
                 task=task,
                 column_names=column_names,
                 data_sample=data_sample,
-                analysis_summary=analysis_summary
+                analysis_summary=analysis_summary,
+                dataframe_info=dataframe_info
             )
             
             # Get visualization plan
+            with open("/app/visual_debug/debug_data.json", "w") as f:
+                json.dump(data[:10], f, indent=2)
+
+            # Log the count too
+            logger.info(f"VisualizationAgent debug: received {len(data)} data rows. Wrote debug_data.json.")
             visualization_response = self.llm.invoke(formatted_prompt)
             
             # Extract generated content
             content = visualization_response.content
+            if content.strip().startswith("```"):
+                # remove leading ```json (or ```) and trailing ```
+                content = re.sub(r"^```(?:json)?\s*", "", content, flags=re.MULTILINE)
+                content = re.sub(r"\s*```$", "", content, flags=re.MULTILINE)
             
+            content = re.sub(r"\\\s*\n", "", content)  
+            with open("/app/visual_debug/debug_llm_output.txt", "w") as f:
+                f.write(content)
+
+            logger.info("VisualizationAgent debug: wrote raw LLM output to debug_llm_output.txt")
+
+
             # Parse the code from the response
             try:
                 response_json = json.loads(content)
-                code = response_json.get("code", "")
+
+
+                code = response_json["code"]
+                code = re.sub(r'# Sample data[\\s\\S]+$', '', code)
+                
+                with open("/app/visual_debug/debug_extracted_code.py", "w") as f:
+                    f.write(code)
+
+                logger.info("VisualizationAgent debug 1: wrote extracted code to debug_extracted_code.py")
+
                 chart_type = response_json.get("chart_type", "unknown")
                 explanation = response_json.get("explanation", "")
             except json.JSONDecodeError:
@@ -127,25 +175,46 @@ Please generate the visualization code based on this information.
                     # Last attempt to find Python code
                     code_match = re.search(r'import matplotlib|import seaborn|import plotly(.*?)(?:```|$)', content, re.DOTALL)
                     code = code_match.group(0) if code_match else ""
+                    # Remove any “# Sample data” and everything that follows it
+                    code = re.sub(r'# Sample data[\\s\\S]+$', '', code)
+                    with open("/app/visual_debug/debug_extracted_code.py", "w") as f:
+                        f.write(code)
+
+                    logger.info("VisualizationAgent debug 2: wrote extracted code to debug_extracted_code.py")
                     logger.info("Attempted extraction using import pattern")
                 
+                # Try to guess chart type from code
                 chart_type = "unknown"
+                if "hist" in code.lower():
+                    chart_type = "histogram"
+                elif "pie" in code.lower():
+                    chart_type = "pie"
+                elif "bar" in code.lower():
+                    chart_type = "bar"
+                elif "line" in code.lower():
+                    chart_type = "line"
+                elif "scatter" in code.lower():
+                    chart_type = "scatter"
+                
                 explanation = "Visualization code extracted from non-JSON response"
             
             if not code:
                 logger.warning("No visualization code could be extracted from the response")
                 return self._generate_no_data_visualization("Couldn't generate appropriate visualization code.")
             
+            # Add proper error handling to the code
+            code = self._add_error_handling_to_code(code, df)
+            
             # Log the code being used
             logger.debug(f"Visualization code: {code[:500]}...")
             
             # Create the visualization using the extracted code
             logger.info("Executing visualization code...")
-            image_data, image_format = create_visualization(code, data)
+            image_data, image_format = self._execute_visualization_code(code, data)
             
             # Check if we have valid image data
             if not image_data or len(image_data) == 0:
-                logger.error("No image data returned from create_visualization")
+                logger.error("No image data returned from _execute_visualization_code")
                 return self._generate_error_visualization("Failed to generate visualization: No image data returned")
             
             logger.info(f"Generated image data with size: {len(image_data)} bytes, format: {image_format}")
@@ -184,6 +253,290 @@ Please generate the visualization code based on this information.
             logger.error(f"Error in Visualization Agent: {e}", exc_info=True)
             return self._generate_error_visualization(str(e))
     
+    def _prepare_dataframe_info(self, df):
+        """
+        Prepare detailed information about the dataframe for the visualization prompt
+        
+        Args:
+            df: Pandas DataFrame to analyze
+            
+        Returns:
+            Formatted string with dataframe information
+        """
+        try:
+            info_parts = []
+            
+            # Basic info
+            info_parts.append(f"DataFrame dimensions: {df.shape[0]} rows × {df.shape[1]} columns")
+            info_parts.append(f"Column names: {list(df.columns)}")
+            
+            # Column types
+            col_types = {}
+            for col in df.columns:
+                col_types[col] = str(df[col].dtype)
+            info_parts.append(f"Column types: {col_types}")
+            
+            # Null counts
+            null_counts = {}
+            for col in df.columns:
+                null_count = df[col].isna().sum()
+                if null_count > 0:
+                    null_counts[col] = int(null_count)
+            
+            if null_counts:
+                info_parts.append(f"Columns with null values: {null_counts}")
+            
+            # Column statistics
+            numeric_cols = df.select_dtypes(include=['number']).columns
+            if len(numeric_cols) > 0:
+                info_parts.append("\nNumeric columns statistics:")
+                for col in numeric_cols:
+                    try:
+                        stats = {
+                            "min": float(df[col].min()) if not pd.isna(df[col].min()) else "NULL",
+                            "max": float(df[col].max()) if not pd.isna(df[col].max()) else "NULL",
+                            "mean": float(df[col].mean()) if not pd.isna(df[col].mean()) else "NULL", 
+                            "median": float(df[col].median()) if not pd.isna(df[col].median()) else "NULL",
+                            "std": float(df[col].std()) if not pd.isna(df[col].std()) else "NULL",
+                            "unique_count": int(df[col].nunique())
+                        }
+                        info_parts.append(f"  - {col}: {stats}")
+                    except:
+                        pass
+            
+            # Categorical columns
+            cat_cols = df.select_dtypes(include=['object', 'category']).columns
+            if len(cat_cols) > 0:
+                info_parts.append("\nCategorical columns information:")
+                for col in cat_cols:
+                    try:
+                        unique_count = df[col].nunique()
+                        info_parts.append(f"  - {col}: {unique_count} unique values")
+                        
+                        if unique_count < 10:  # Only show values for columns with few unique values
+                            value_counts = df[col].value_counts().head(5).to_dict()
+                            value_info = ", ".join([f"{k}: {v}" for k, v in value_counts.items()])
+                            info_parts.append(f"    Top values: {value_info}")
+                    except:
+                        pass
+            
+            # Check for potential date columns
+            date_cols = []
+            for col in df.columns:
+                # Check column name
+                if any(date_term in col.lower() for date_term in ['date', 'year', 'month', 'time', 'day']):
+                    date_cols.append(col)
+                    
+            if date_cols:
+                info_parts.append(f"\nPotential date/time columns: {date_cols}")
+            
+            # Check for columns that might be suitable for specific visualizations
+            if len(numeric_cols) >= 2:
+                info_parts.append("\nPotential scatter plot combinations:")
+                for i, col1 in enumerate(numeric_cols[:3]):  # Limit to first 3 to avoid too many combinations
+                    for col2 in numeric_cols[i+1:min(i+4, len(numeric_cols))]:
+                        info_parts.append(f"  - {col1} vs {col2}")
+            
+            if len(numeric_cols) >= 1 and len(cat_cols) >= 1:
+                info_parts.append("\nPotential bar chart combinations:")
+                for cat_col in cat_cols[:2]:  # Limit to first 2 categorical columns
+                    for num_col in numeric_cols[:2]:  # Limit to first 2 numeric columns
+                        info_parts.append(f"  - {cat_col} (x-axis) vs {num_col} (y-axis)")
+            
+            # Special cases for university data
+            if any('gpa' in col.lower() for col in df.columns):
+                info_parts.append("\nGPA data detected - suitable for histogram or density plot")
+            
+            if any('enrollment' in col.lower() for col in df.columns):
+                info_parts.append("\nEnrollment data detected - suitable for trend or bar chart")
+            
+            if any('aid' in col.lower() for col in df.columns) or any('financial' in col.lower() for col in df.columns):
+                info_parts.append("\nFinancial aid data detected - suitable for pie chart or stacked bar chart")
+            
+            return "\n".join(info_parts)
+            
+        except Exception as e:
+            logger.error(f"Error preparing dataframe info: {e}")
+            return f"Error analyzing dataframe: {e}"
+    
+    def _add_error_handling_to_code(self, code, df):
+        """
+        Add error handling to visualization code
+        
+        Args:
+            code: The original code
+            df: DataFrame to analyze for potential issues
+            
+        Returns:
+            Enhanced code with error handling
+        """
+        # Check for problematic column names (e.g., with spaces or special characters)
+        problem_cols = []
+        for col in df.columns:
+            if ' ' in col or '.' in col or '-' in col or any(c in col for c in '!"#$%&\'()*+,/:;<=>?@[\\]^`{|}~'):
+                problem_cols.append(col)
+        
+        # Create error handling wrapper
+        wrapper_start = """
+# Error handling wrapper
+try:
+    # Convert input to DataFrame if not already
+    if not isinstance(df, pd.DataFrame):
+        df = pd.DataFrame(df)
+    
+    # Check if DataFrame is empty
+    if len(df) == 0:
+        plt.figure(figsize=(10, 6))
+        plt.text(0.5, 0.5, "No data available for visualization", 
+                horizontalalignment='center', verticalalignment='center', 
+                transform=plt.gca().transAxes, fontsize=14)
+        plt.axis('off')
+        
+        # Save empty chart to buffer
+        buf = buffer
+        plt.savefig(buf, format='png', dpi=100)
+        buf.seek(0)
+    else:
+"""
+        
+        # Add column fixes if needed
+        if problem_cols:
+            wrapper_start += "\n        # Fix problematic column names\n"
+            col_fixes = []
+            for col in problem_cols:
+                safe_col = col.replace(' ', '_').replace('.', '_').replace('-', '_')
+                # Remove any remaining special characters
+                safe_col = ''.join(c for c in safe_col if c.isalnum() or c == '_')
+                col_fixes.append(f'        df = df.rename(columns={{"{col}": "{safe_col}"}})  # Fix problematic column name')
+            
+            wrapper_start += "\n".join(col_fixes) + "\n"
+        
+        # Add null value handling
+        wrapper_start += """
+        # Drop rows with all NaN values
+        df = df.dropna(how='all')
+        
+        # Fill remaining NaN values where needed
+        numeric_cols = df.select_dtypes(include=['number']).columns
+        for col in numeric_cols:
+            df[col] = df[col].fillna(df[col].median() if not pd.isna(df[col].median()) else 0)
+"""
+        
+        # Indent original code
+        indented_code = "\n".join(["        " + line for line in code.split("\n")])
+        
+        # Wrapper end with error handling
+        wrapper_end = """
+except Exception as e:
+    # Create error visualization
+    plt.figure(figsize=(10, 6))
+    plt.text(0.5, 0.5, f"Error creating visualization: {e}", 
+            horizontalalignment='center', verticalalignment='center', 
+            transform=plt.gca().transAxes, fontsize=14, color='darkred')
+    plt.axis('off')
+    
+    # Make sure we save to the buffer even if there was an error
+    if 'buf' not in locals() and 'buffer' in globals():
+        buf = buffer
+        plt.savefig(buf, format='png', dpi=100)
+        buf.seek(0)
+"""
+        
+        # Combine everything
+        enhanced_code = wrapper_start + indented_code + wrapper_end
+        
+        return enhanced_code
+    
+    def _execute_visualization_code(self, code: str, data: List[Dict[str, Any]]) -> Tuple[bytes, str]:
+        """
+        Execute visualization code and get the image data
+        
+        Args:
+            code: Python code to execute
+            data: Data to visualize
+            
+        Returns:
+            Tuple of (image data as bytes, image format)
+        """
+        try:
+            # Convert data to DataFrame
+            df = pd.DataFrame(data)
+            logger.info(f"ABER DF {df}")
+            # Create a bytes buffer for the image
+            buf = io.BytesIO()
+            
+            # Create a safe execution environment with limited imports
+            exec_globals = {
+                'pd': pd,
+                'plt': plt,
+                'sns': sns,
+                'np': np,
+                'df': df,
+                'io': io,
+                'buffer': buf
+            }
+            
+            # Add clear figure to avoid contamination from previous runs
+            plt.clf()
+            
+            # Execute the visualization code
+            exec(code, exec_globals)
+            
+            # Check if the code saved the figure to the buffer
+            if buf.getbuffer().nbytes == 0:
+                # If not, save the current figure
+                plt.savefig(buf, format=settings.VISUALIZATION_FORMAT, dpi=settings.VISUALIZATION_DPI)
+                
+            # Reset buffer position
+            buf.seek(0)
+
+            # Get the image data
+            image_data = buf.getvalue()
+            
+            # after you have image_data in bytes
+            with open("/app/visual_debug/last_plot.png", "wb") as f:
+                f.write(image_data)
+            logger.info("Wrote debug plot to /app/visual_debug/last_plot.png")
+
+            with open("/app/visual_debug/last_code.py", "w") as f:
+                    f.write(code)
+            logger.info("Wrote visualization code to /app/visual_debug/last_code.py")
+
+
+            # Print debug info
+            logger.info(f"Generated visualization with size: {len(image_data)} bytes")
+            
+            # Return the image data
+            return image_data, settings.VISUALIZATION_FORMAT
+        
+        except Exception as e:
+            logger.error(f"Error executing visualization code: {e}", exc_info=True)
+            # Create a simple error visualization
+            return self._create_error_visualization_image(str(e)), settings.VISUALIZATION_FORMAT
+    
+    def _create_error_visualization_image(self, error_message: str) -> bytes:
+        """
+        Create an error visualization image
+        
+        Args:
+            error_message: Error message to display
+            
+        Returns:
+            Image data as bytes
+        """
+        plt.figure(figsize=(10, 6))
+        plt.text(0.5, 0.5, f"Error creating visualization:\n\n{error_message}", 
+                horizontalalignment='center', verticalalignment='center',
+                transform=plt.gca().transAxes, fontsize=14, color='darkred')
+        plt.axis('off')
+        
+        # Save to buffer
+        buf = io.BytesIO()
+        plt.savefig(buf, format=settings.VISUALIZATION_FORMAT, dpi=settings.VISUALIZATION_DPI)
+        buf.seek(0)
+        
+        return buf.getvalue()
+    
     def _generate_no_data_visualization(self, message: str) -> Dict[str, Any]:
         """
         Generate a visualization indicating no data is available
@@ -213,7 +566,7 @@ buf.seek(0)
 """
         
         # Create the visualization
-        image_data, image_format = create_visualization(code, [])
+        image_data, image_format = self._execute_visualization_code(code, [])
         
         # Encode image as base64 for transmission
         base64_image = base64.b64encode(image_data).decode('utf-8')
@@ -239,24 +592,24 @@ buf.seek(0)
         
         # Simple code to create an error visualization
         code = f"""
-    import matplotlib.pyplot as plt
+        import matplotlib.pyplot as plt
 
-    plt.figure(figsize=(10, 6))
-    plt.text(0.5, 0.5, "Error creating visualization:\\n\\n{error_message}", 
-            horizontalalignment='center', verticalalignment='center',
-            transform=plt.gca().transAxes, fontsize=14, wrap=True,
-            color='darkred')
-    plt.axis('off')
+        plt.figure(figsize=(10, 6))
+        plt.text(0.5, 0.5, "Error creating visualization:\\n\\n{error_message}", 
+                horizontalalignment='center', verticalalignment='center',
+                transform=plt.gca().transAxes, fontsize=14, wrap=True,
+                color='darkred')
+        plt.axis('off')
 
-    # Save to buffer
-    buf = buffer  # Use the buffer provided in the execution environment
-    plt.savefig(buf, format='{settings.VISUALIZATION_FORMAT}', dpi={settings.VISUALIZATION_DPI})
-    buf.seek(0)
-    """
+        # Save to buffer
+        buf = buffer  # Use the buffer provided in the execution environment
+        plt.savefig(buf, format='{settings.VISUALIZATION_FORMAT}', dpi={settings.VISUALIZATION_DPI})
+        buf.seek(0)
+        """
         
         try:
             # Create the visualization
-            image_data, image_format = create_visualization(code, [])
+            image_data, image_format = self._execute_visualization_code(code, [])
             
             # Encode image as base64 for transmission
             base64_image = base64.b64encode(image_data).decode('utf-8')

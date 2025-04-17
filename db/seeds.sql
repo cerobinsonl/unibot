@@ -536,72 +536,107 @@ BEGIN
     AND e."EndDate" IS NULL; -- Only if current job is active
 
     -- 10. Add student programs (all students are in at least one program)
-    INSERT INTO "PsStudentProgram" (
-        "PersonId", 
-        "ProgramName", 
-        "Department", 
-        "StartTerm", 
-        "EndTerm", 
-        "ProgramStatus"
-    )
+    -- 1) Build the student info plus term/status
+    -- 10a) Primary‐program insert
+    WITH student_base AS (
     SELECT
         p."PersonId",
-        (SELECT program_names[1 + floor(random()::numeric* array_length(program_names, 1))::int]),
-        (SELECT departments[1 + floor(random()::numeric* array_length(departments, 1))::int]),
-        -- Realistic terms based on start date
-        CASE 
-            WHEN EXTRACT(MONTH FROM opr."StartDate") BETWEEN 1 AND 5 THEN 
-                EXTRACT(YEAR FROM opr."StartDate")::text || '-Spring'
-            WHEN EXTRACT(MONTH FROM opr."StartDate") BETWEEN 6 AND 7 THEN 
-                EXTRACT(YEAR FROM opr."StartDate")::text || '-Summer'
-            ELSE 
-                EXTRACT(YEAR FROM opr."StartDate")::text || '-Fall'
-        END,
-        -- End term is typically 4 years after start for undergrad
-        CASE 
-            WHEN EXTRACT(MONTH FROM opr."StartDate") BETWEEN 1 AND 5 THEN 
-                (EXTRACT(YEAR FROM opr."StartDate") + 4)::text || '-Spring'
-            WHEN EXTRACT(MONTH FROM opr."StartDate") BETWEEN 6 AND 7 THEN 
-                (EXTRACT(YEAR FROM opr."StartDate") + 4)::text || '-Summer'
-            ELSE 
-                (EXTRACT(YEAR FROM opr."StartDate") + 4)::text || '-Fall'
-        END,
         CASE
-            WHEN opr."EndDate" IS NOT NULL AND opr."EndDate" < CURRENT_DATE THEN 'Completed'
-            WHEN sar."AcademicStanding" = 'Academic Probation' THEN 'Probation'
-            ELSE 'Active'
-        END
+        WHEN EXTRACT(MONTH FROM opr."StartDate") BETWEEN 1 AND 5 THEN EXTRACT(YEAR FROM opr."StartDate")::text || '-Spring'
+        WHEN EXTRACT(MONTH FROM opr."StartDate") BETWEEN 6 AND 7 THEN EXTRACT(YEAR FROM opr."StartDate")::text || '-Summer'
+        ELSE EXTRACT(YEAR FROM opr."StartDate")::text || '-Fall'
+        END                                               AS "StartTerm",
+        CASE
+        WHEN EXTRACT(MONTH FROM opr."StartDate") BETWEEN 1 AND 5 THEN (EXTRACT(YEAR FROM opr."StartDate") + 4)::text || '-Spring'
+        WHEN EXTRACT(MONTH FROM opr."StartDate") BETWEEN 6 AND 7 THEN (EXTRACT(YEAR FROM opr."StartDate") + 4)::text || '-Summer'
+        ELSE (EXTRACT(YEAR FROM opr."StartDate") + 4)::text || '-Fall'
+        END                                               AS "EndTerm",
+        CASE
+        WHEN opr."EndDate" IS NOT NULL AND opr."EndDate" < CURRENT_DATE THEN 'Completed'
+        WHEN sar."AcademicStanding" = 'Academic Probation'            THEN 'Probation'
+        ELSE 'Active'
+        END                                               AS "ProgramStatus"
     FROM "Person" p
-    JOIN "OperationPersonRole" opr ON p."PersonId" = opr."PersonId"
-    LEFT JOIN "PsStudentAcademicRecord" sar ON p."PersonId" = sar."PersonId"
-    WHERE opr."RoleName" = 'Student'
-    GROUP BY p."PersonId", opr."StartDate", opr."EndDate", sar."AcademicStanding";
-
-    -- Some students are in dual degree programs
+    JOIN "OperationPersonRole" opr
+        ON p."PersonId" = opr."PersonId"
+    AND opr."RoleName" = 'Student'
+    LEFT JOIN "PsStudentAcademicRecord" sar
+        ON p."PersonId" = sar."PersonId"
+    GROUP BY p."PersonId", opr."StartDate", opr."EndDate", sar."AcademicStanding"
+    ),
+    numbered AS (
+    SELECT
+        sb.*,
+        row_number() OVER (ORDER BY random()) AS rn,
+        (random() < 0.10)                   AS take_second
+    FROM student_base sb
+    )
     INSERT INTO "PsStudentProgram" (
-        "PersonId", 
-        "ProgramName", 
-        "Department", 
-        "StartTerm", 
-        "EndTerm", 
-        "ProgramStatus"
+    "PersonId","ProgramName","Department","StartTerm","EndTerm","ProgramStatus"
     )
     SELECT
+    n."PersonId",
+    program_names[((n.rn - 1) % array_length(program_names,1)) + 1],
+    departments[1 + floor(random() * array_length(departments,1))::int],
+    n."StartTerm",
+    n."EndTerm",
+    n."ProgramStatus"
+    FROM numbered n
+    ;
+
+    -- 10b) Secondary‐program insert for about 10% of students
+    WITH student_base AS (
+    SELECT
         p."PersonId",
-        -- Make sure second program is different from first
-        (SELECT prog FROM (
-            SELECT unnest(program_names) AS prog 
-            EXCEPT 
-            SELECT "ProgramName" FROM "PsStudentProgram" WHERE "PersonId" = p."PersonId"
-        ) sub ORDER BY random()::numeric LIMIT 1),
-        (SELECT departments[1 + floor(random()::numeric* array_length(departments, 1))::int]),
-        sp."StartTerm",
-        sp."EndTerm",
-        sp."ProgramStatus"
+        CASE
+        WHEN EXTRACT(MONTH FROM opr."StartDate") BETWEEN 1 AND 5 THEN EXTRACT(YEAR FROM opr."StartDate")::text || '-Spring'
+        WHEN EXTRACT(MONTH FROM opr."StartDate") BETWEEN 6 AND 7 THEN EXTRACT(YEAR FROM opr."StartDate")::text || '-Summer'
+        ELSE EXTRACT(YEAR FROM opr."StartDate")::text || '-Fall'
+        END                                               AS "StartTerm",
+        CASE
+        WHEN EXTRACT(MONTH FROM opr."StartDate") BETWEEN 1 AND 5 THEN (EXTRACT(YEAR FROM opr."StartDate") + 4)::text || '-Spring'
+        WHEN EXTRACT(MONTH FROM opr."StartDate") BETWEEN 6 AND 7 THEN (EXTRACT(YEAR FROM opr."StartDate") + 4)::text || '-Summer'
+        ELSE (EXTRACT(YEAR FROM opr."StartDate") + 4)::text || '-Fall'
+        END                                               AS "EndTerm",
+        CASE
+        WHEN opr."EndDate" IS NOT NULL AND opr."EndDate" < CURRENT_DATE THEN 'Completed'
+        WHEN sar."AcademicStanding" = 'Academic Probation'            THEN 'Probation'
+        ELSE 'Active'
+        END                                               AS "ProgramStatus"
     FROM "Person" p
-    JOIN "PsStudentProgram" sp ON p."PersonId" = sp."PersonId"
-    WHERE random()::numeric< 0.15 -- 15% in dual degree programs
-    AND sp."ProgramStatus" = 'Active'; -- Only active students get dual programs
+    JOIN "OperationPersonRole" opr
+        ON p."PersonId" = opr."PersonId"
+    AND opr."RoleName" = 'Student'
+    LEFT JOIN "PsStudentAcademicRecord" sar
+        ON p."PersonId" = sar."PersonId"
+    GROUP BY p."PersonId", opr."StartDate", opr."EndDate", sar."AcademicStanding"
+    ),
+    numbered AS (
+    SELECT
+        sb.*,
+        row_number() OVER (ORDER BY random()) AS rn,
+        (random() < 0.10)                   AS take_second
+    FROM student_base sb
+    )
+    INSERT INTO "PsStudentProgram" (
+    "PersonId","ProgramName","Department","StartTerm","EndTerm","ProgramStatus"
+    )
+    SELECT
+    n."PersonId",
+    (
+        SELECT pn
+        FROM unnest(program_names) AS pn
+        WHERE pn <> program_names[((n.rn - 1) % array_length(program_names,1)) + 1]
+        ORDER BY random()
+        LIMIT 1
+    )                                              AS "ProgramName",
+    departments[1 + floor(random() * array_length(departments,1))::int],
+    n."StartTerm",
+    n."EndTerm",
+    n."ProgramStatus"
+    FROM numbered n
+    WHERE n.take_second
+    ;
 
     -- 11. Create class sections
     -- First, create an array of possible class sections
