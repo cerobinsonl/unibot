@@ -26,7 +26,7 @@ class CommunicationCoordinator:
         
         # Initialize specialist agents
         self.email_agent = EmailAgent()
-        self.sql_agent = SQLAgent()  # Add SQL agent for database queries
+        self.sql_agent = SQLAgent()  # SQL agent for database queries
         
         # Create the task planning prompt
         self.planning_prompt = """
@@ -58,55 +58,6 @@ Example:
 Important: Make sure the content is appropriate for a university setting and formatted correctly for the chosen communication type.
 
 User request: {user_input}
-"""
-        
-        # Create a query construction prompt that emphasizes exploration
-        self.recipient_query_prompt = """
-You need to find the appropriate recipients for a university communication.
-
-Request: {recipient_query}
-
-Based on this request, create a natural language query for our SQL Agent to find the right recipients in our database. 
-The SQL Agent will translate your natural language query into SQL.
-
-IMPORTANT: For fields that might have unknown values (like Academic Standing or Status fields),
-instruct the SQL Agent to first explore those values and then construct an appropriate query, rather than assuming
-specific values exist in the database.
-
-For example, instead of:
-"Find students with AcademicStanding = 'Academic Probation'"
-
-Prefer:
-"First, find all possible values in the AcademicStanding column of the PsStudentAcademicRecord table, then find
-all students whose AcademicStanding indicates academic difficulty, looking for values like 'Probation',
-'Warning', or any value containing words about academic concerns."
-
-Your response should be a clear step-by-step instruction that:
-1. First explores relevant field values if needed
-2. Then constructs a query that will find the appropriate recipients
-3. Uses broad matching conditions rather than assuming exact values
-
-Your response:
-"""
-        
-        # Create a two-step exploratory query prompt
-        self.exploratory_query_prompt = """
-In order to find recipients for a university communication, we need to approach this in two steps:
-
-Step 1: Explore the database's relevant field values to understand what's available.
-Step 2: Construct a targeted query based on those actual values.
-
-For a request about: {recipient_type}
-
-Please provide two sequential queries:
-1. First query: Explore the relevant field values in the database to understand what actual values exist
-2. Second query: Find the appropriate recipients based on the actual values that would be revealed by the first query
-
-For example, if finding students on academic probation:
-1. First query: "Find all distinct values in the AcademicStanding column of the PsStudentAcademicRecord table"
-2. Second query: "Based on the values found, find all students whose AcademicStanding indicates probation or academic difficulty (likely values containing terms like 'probation', 'warning', 'concern', etc.)"
-
-Please generate these two sequential queries for our current request.
 """
         
         # Create the results synthesis prompt
@@ -196,201 +147,9 @@ Create a response summarizing the action taken.
                 "timestamp": self._get_timestamp()
             })
             
-            # Step 2: Convert recipient query to natural language that the SQL Agent can understand
+            # Step 2: Find recipients based on recipient_query
             recipient_description = plan.get("recipient_query", "")
-            recipients = []
-            
-            # Determine if this requires special field exploration
-            needs_exploration = False
-            recipient_type = ""
-            if "probation" in recipient_description.lower() or "probation" in user_input.lower():
-                needs_exploration = True
-                recipient_type = "students on academic probation"
-            elif "standing" in recipient_description.lower() or "gpa" in recipient_description.lower():
-                needs_exploration = True
-                recipient_type = "students with specific academic standing"
-            elif "status" in recipient_description.lower() and ("application" in recipient_description.lower() 
-                                                            or "financial" in recipient_description.lower()):
-                needs_exploration = True
-                recipient_type = "students with specific financial aid status"
-            
-            if recipient_description:
-                if needs_exploration:
-                    # Use exploratory approach with multiple queries
-                    exploration_prompt = self.exploratory_query_prompt.format(recipient_type=recipient_type)
-                    exploration_plan = self.llm.invoke(exploration_prompt).content
-                    
-                    # Log the exploration plan
-                    logger.info(f"Using exploratory approach for {recipient_type}")
-                    logger.info(f"Exploration plan: {exploration_plan}")
-                    
-                    # Extract the exploration query
-                    exploration_query = None
-                    query_lines = exploration_plan.split("\n")
-                    for i, line in enumerate(query_lines):
-                        if "first query" in line.lower() and i+1 < len(query_lines):
-                            exploration_query = query_lines[i+1].strip('"\'')
-                            break
-                    
-                    if not exploration_query and "1." in exploration_plan:
-                        # Try to find the query after a numbered list item
-                        parts = exploration_plan.split("1.")
-                        if len(parts) > 1:
-                            exploration_query = parts[1].strip().split("\n")[0].strip('"\'')
-                    
-                    if not exploration_query:
-                        # Fallback to a generic exploration query based on recipient type
-                        if "probation" in recipient_type.lower():
-                            exploration_query = "Find all distinct values in the AcademicStanding column of the PsStudentAcademicRecord table"
-                        elif "financial" in recipient_type.lower():
-                            exploration_query = "Find all distinct values in the Status column of the FinancialAid table"
-                    
-                    # Log and execute the exploration query if we have one
-                    if exploration_query:
-                        logger.info(f"Executing exploration query: {exploration_query}")
-                        
-                        # Execute the exploration query
-                        exploration_result = self.sql_agent(exploration_query)
-                        
-                        # Add exploration step to intermediate steps
-                        intermediate_steps.append({
-                            "agent": "sql_agent",
-                            "action": "explore_field_values",
-                            "input": exploration_query,
-                            "output": "Exploration results",
-                            "timestamp": self._get_timestamp()
-                        })
-                        
-                        # Extract possible values for matching
-                        possible_values = []
-                        if exploration_result and not exploration_result.get("is_error", False):
-                            results = exploration_result.get("results", [])
-                            
-                            # Try to extract distinct values
-                            for row in results:
-                                for key, value in row.items():
-                                    if value and isinstance(value, str):
-                                        possible_values.append(value)
-                        
-                        # Log the possible values found
-                        logger.info(f"Exploration found values: {possible_values}")
-                        
-                        # Extract the main query based on exploration results
-                        recipient_query = None
-                        for i, line in enumerate(query_lines):
-                            if "second query" in line.lower() and i+1 < len(query_lines):
-                                recipient_query = query_lines[i+1].strip('"\'')
-                                break
-                        
-                        if not recipient_query and "2." in exploration_plan:
-                            # Try to find the query after a numbered list item
-                            parts = exploration_plan.split("2.")
-                            if len(parts) > 1:
-                                recipient_query = parts[1].strip().split("\n")[0].strip('"\'')
-                        
-                        # Modify the recipient query to include actual values if we found them
-                        if recipient_query and possible_values:
-                            # Check if it's a probation query
-                            if "probation" in recipient_type.lower() or "academic" in recipient_type.lower():
-                                values_str = ", ".join([f"'{v}'" for v in possible_values])
-                                recipient_query += f" (Found values: {values_str})"
-                    
-                    # If we couldn't construct a good query from exploration
-                    if not recipient_query:
-                        # Generate a better query with the exploration results
-                        enhanced_prompt = self.recipient_query_prompt.format(recipient_query=recipient_description)
-                        recipient_query = self.llm.invoke(enhanced_prompt).content
-                else:
-                    # Standard approach for simple queries
-                    enhanced_prompt = self.recipient_query_prompt.format(recipient_query=recipient_description)
-                    recipient_query = self.llm.invoke(enhanced_prompt).content
-                
-                # Log the final natural language query
-                logger.info(f"Natural language query: {recipient_query}")
-                
-                # Use SQL agent for the actual query
-                query_result = self.sql_agent(recipient_query)
-                
-                # Add SQL execution to intermediate steps
-                intermediate_steps.append({
-                    "agent": "sql_agent",
-                    "action": "query_recipients",
-                    "input": recipient_query,
-                    "output": "SQL result with recipient emails",  # Don't log all emails for privacy
-                    "timestamp": self._get_timestamp()
-                })
-                
-                # Extract email addresses
-                if query_result and not query_result.get("is_error", False):
-                    results = query_result.get("results", [])
-                    
-                    # Try to find email addresses in results
-                    for row in results:
-                        # Look for email column
-                        email_value = None
-                        for key, value in row.items():
-                            # Check if this column looks like an email field
-                            if isinstance(value, str) and ("email" in key.lower() or "@" in value):
-                                email_value = value
-                                break
-                                
-                        if email_value:
-                            recipients.append(email_value)
-            
-            # If no recipients found or query failed, use a fallback
-            if not recipients:
-                # Log the issue
-                logger.warning("No recipients found from database query, using fallback")
-                
-                # Try one more direct approach if it was an academic standing or status query
-                if needs_exploration:
-                    # Make one more attempt with a different approach
-                    fallback_query = None
-                    if "probation" in recipient_type.lower():
-                        fallback_query = "Find email addresses of all students with a GPA below 2.5"
-                    elif "financial" in recipient_type.lower():
-                        fallback_query = "Find email addresses of all students who have any record in the FinancialAid table"
-                    
-                    if fallback_query:
-                        logger.info(f"Attempting fallback query: {fallback_query}")
-                        fallback_result = self.sql_agent(fallback_query)
-                        
-                        # Add fallback step to intermediate steps
-                        intermediate_steps.append({
-                            "agent": "sql_agent",
-                            "action": "fallback_query",
-                            "input": fallback_query,
-                            "output": "SQL fallback result",
-                            "timestamp": self._get_timestamp()
-                        })
-                        
-                        # Extract emails from fallback
-                        if fallback_result and not fallback_result.get("is_error", False):
-                            results = fallback_result.get("results", [])
-                            
-                            # Extract emails from results
-                            for row in results:
-                                for key, value in row.items():
-                                    if isinstance(value, str) and ("email" in key.lower() or "@" in value):
-                                        recipients.append(value)
-                                        
-                            if recipients:
-                                logger.info(f"Found {len(recipients)} recipients with fallback query")
-                
-                # If still no recipients, use general fallback
-                if not recipients:
-                    if "financial aid" in user_input.lower():
-                        recipients = ["financial_aid_students@university.edu"]
-                        recipient_description = "students eligible for financial aid"
-                    elif "faculty" in user_input.lower():
-                        recipients = ["all_faculty@university.edu"]
-                        recipient_description = "faculty members"
-                    elif "probation" in user_input.lower():
-                        recipients = ["academic_support@university.edu"]
-                        recipient_description = "students on academic probation"
-                    else:
-                        recipients = ["all_students@university.edu"]
-                        recipient_description = "all students"
+            recipients = self._find_recipients(recipient_description, intermediate_steps)
             
             # Step 3: Handle the communication based on type
             result = None
@@ -485,6 +244,197 @@ Create a response summarizing the action taken.
             state["current_agent"] = "communication"
             
             return state
+    
+    def _find_recipients(self, recipient_description: str, intermediate_steps: List[Dict[str, Any]]) -> List[str]:
+        """
+        Find recipients based on natural language description
+        
+        This method sends natural language queries to the SQL agent to find recipients.
+        It first tries targeted queries based on the recipient description, with fallbacks
+        as needed.
+        
+        Args:
+            recipient_description: Natural language description of recipients
+            intermediate_steps: List to record intermediate steps
+            
+        Returns:
+            List of recipient email addresses
+        """
+        recipients = []
+        logger.info(f"Starting to find recipients for: {recipient_description}")
+        
+        # Step 1: Prepare queries based on description type
+        queries = []
+        
+        # Check what type of recipients we're looking for
+        is_probation = "probation" in recipient_description.lower() or "academic standing" in recipient_description.lower()
+        is_financial_aid = "financial aid" in recipient_description.lower() or "scholarship" in recipient_description.lower()
+        is_department = "department" in recipient_description.lower() or "program" in recipient_description.lower()
+        is_gpa = "gpa" in recipient_description.lower() or "grade" in recipient_description.lower()
+        
+        # Step 2: Formulate appropriate queries for the recipient type
+        
+        if is_probation:
+            # For academic probation, first explore academic standing values
+            queries.append("Find all distinct values in the AcademicStanding column of the PsStudentAcademicRecord table")
+            
+            # Use a more flexible query that handles different possible academic standing values
+            queries.append("Find email addresses of all students whose AcademicStanding contains 'Probation' or is exactly 'Probation'")
+            
+            # Add a GPA-based fallback
+            queries.append("Find email addresses of all students with a GPA below 2.5")
+            
+        elif is_financial_aid:
+            # For financial aid, explore financial aid status values
+            queries.append("Find all distinct financial aid status values available in the database")
+            
+            # Then find students with specific statuses
+            queries.append("Find email addresses of all students who have received financial aid")
+            
+        elif is_department:
+            # For department queries, find departments and then students in them
+            queries.append("Find all available departments or programs in the database")
+            
+            # Extract department from description if available
+            department_query = f"Find email addresses of all students in the {recipient_description}"
+            queries.append(department_query)
+            
+        elif is_gpa:
+            # For GPA-related queries
+            queries.append("Find email addresses of all students with GPA below 2.5")
+            queries.append("Find email addresses of all students with GPA above 3.5")
+            
+        else:
+            # Generic student query
+            queries.append("Find email addresses of all current students")
+        
+        # Step 3: Execute queries in sequence until we find recipients
+        for query in queries:
+            # Skip empty queries
+            if not query:
+                continue
+                
+            logger.info(f"Executing query: {query}")
+            
+            # Add the query to intermediate steps
+            intermediate_steps.append({
+                "agent": "sql_agent",
+                "action": "query_recipients",
+                "input": query,
+                "output": "Processing query to find recipients",
+                "timestamp": self._get_timestamp()
+            })
+            
+            # Execute the query using the SQL agent
+            sql_result = self.sql_agent(query)
+            
+            # Debug logging for sql result
+            if "is_error" in sql_result:
+                logger.info(f"Query error status: {sql_result['is_error']}")
+            
+            if "results" in sql_result:
+                logger.info(f"Query returned {len(sql_result['results'])} results")
+            
+            # Parse the result to find emails
+            if not sql_result.get("is_error", True) and sql_result.get("results"):
+                results = sql_result.get("results", [])
+                logger.info(f"Processing {len(results)} rows from query result")
+                
+                # Extract potential email addresses from results
+                emails_found = 0
+                for row in results:
+                    # Detailed logging for each row
+                    logger.debug(f"Processing row: {row}")
+                    for key, value in row.items():
+                        if isinstance(value, str) and "@" in value:
+                            recipients.append(value)
+                            emails_found += 1
+                            logger.debug(f"Found email in column {key}: {value}")
+                
+                logger.info(f"Extracted {emails_found} email addresses from query results")
+                
+                # If we found emails, we can stop querying
+                if recipients:
+                    logger.info(f"Found {len(recipients)} recipients with query: {query}")
+                    
+                    # Record success in intermediate steps
+                    intermediate_steps.append({
+                        "agent": "sql_agent",
+                        "action": "find_recipients",
+                        "input": query,
+                        "output": f"Found {len(recipients)} recipients",
+                        "timestamp": self._get_timestamp()
+                    })
+                    
+                    return recipients
+                else:
+                    logger.warning(f"Query returned results but no email addresses were found")
+            else:
+                # Log specific error message if available
+                if "error" in sql_result:
+                    logger.warning(f"Query error: {sql_result['error']}")
+        
+        # Step 4: Try one direct GPA query as a last resort
+        last_resort_query = """
+        SELECT "Person"."EmailAddress"
+        FROM "Person"
+        JOIN "PsStudentAcademicRecord" ON "Person"."PersonId" = "PsStudentAcademicRecord"."PersonId"
+        WHERE "PsStudentAcademicRecord"."GPA" < 2.5;
+        """
+        
+        logger.info("Trying last resort direct GPA query")
+        
+        try:
+            # Execute the query directly using SQL agent's raw_query method if available
+            if hasattr(self.sql_agent, 'execute_raw_query'):
+                direct_result = self.sql_agent.execute_raw_query(last_resort_query)
+            else:
+                # Fall back to regular query method with the raw SQL
+                direct_result = self.sql_agent(f"Execute this exact SQL query: {last_resort_query}")
+            
+            # Log the result
+            logger.info(f"Last resort query result: {direct_result}")
+            
+            # Process the results directly
+            if "results" in direct_result and direct_result["results"]:
+                for row in direct_result["results"]:
+                    for value in row.values():
+                        if isinstance(value, str) and "@" in value:
+                            recipients.append(value)
+                
+                logger.info(f"Last resort query found {len(recipients)} email addresses")
+                
+                if recipients:
+                    return recipients
+        except Exception as e:
+            logger.error(f"Error executing last resort query: {e}")
+        
+        # Step 5: If all queries failed to find recipients, use fallback
+        logger.warning("No recipients found with database queries, using fallbacks")
+        
+        fallback_recipients = []
+        
+        if is_probation:
+            fallback_recipients = ["academic_support@university.edu"]
+        elif is_financial_aid:
+            fallback_recipients = ["financial_aid_students@university.edu"]
+        elif is_department:
+            fallback_recipients = ["departmental_students@university.edu"]
+        else:
+            fallback_recipients = ["all_students@university.edu"]
+        
+        logger.info(f"Using fallback recipients: {fallback_recipients}")
+        
+        # Record fallback in intermediate steps
+        intermediate_steps.append({
+            "agent": "communication",
+            "action": "use_fallback_recipients",
+            "input": recipient_description,
+            "output": f"Using fallback recipients: {fallback_recipients}",
+            "timestamp": self._get_timestamp()
+        })
+        
+        return fallback_recipients
     
     def _get_timestamp(self) -> str:
         """Get current timestamp as string"""
