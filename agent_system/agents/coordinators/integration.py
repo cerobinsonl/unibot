@@ -28,7 +28,7 @@ class IntegrationCoordinator:
         # Check if we're using mock APIs
         self.mock_mode = os.getenv("MOCK_EXTERNAL_APIS", "true").lower() == "true"
         
-        # Create the task planning prompt - fixing the format issues with the JSON examples
+        # Create the task planning prompt
         self.planning_prompt = """
 You are the Integration Coordinator for a university administrative system.
 Your job is to manage connections to external systems like the LMS, SIS, and CRM.
@@ -88,8 +88,6 @@ Your response should:
 3. Present important metrics or statistics
 4. Note any limitations or context for interpreting the data
 5. Offer to get additional related information if needed
-
-{mock_notice}
 
 Be professional and concise, as appropriate for university administrative staff.
 
@@ -214,22 +212,30 @@ Create a response synthesizing this information.
                 })
             
             # Step 3: Synthesize results
-            # Add mock notice if in mock mode
-            mock_notice = ""
-            if self.mock_mode:
-                mock_notice = "IMPORTANT: The data provided is from a mock API for demonstration purposes. In a production environment, this would be actual data from the real external system."
-            
             synthesis_input = {
                 "user_input": user_input,
                 "system": plan["system"].upper(),  # Make it uppercase for readability
                 "endpoint": plan["endpoint"],
-                "api_results": json.dumps(api_result, indent=2),
-                "mock_notice": mock_notice
+                "api_results": json.dumps(api_result, indent=2)
             }
             
             formatted_prompt = self.synthesis_prompt.format(**synthesis_input)
             response = self.llm.invoke(formatted_prompt).content
             
+            # Explicitly add mock notice to the response if in mock mode
+            if self.mock_mode:
+                logger.info(f"ABER Desgraciado 1 results")
+                mock_notice = "\n\n[Note: This data is from a simulated mock API for demonstration purposes. In a production environment, this would connect to the actual external system.]"
+                
+                # If we're in debugging/development, add more details about the mock endpoint
+                if settings.DEBUG:
+                    logger.info(f"ABER Desgraciado 2 results")
+                    mock_notice += f"\n[Debug: Mock endpoint called: {plan['system']}/{plan['endpoint']} with parameters: {json.dumps(plan['parameters'])}]"
+                
+                response += mock_notice
+                
+            logger.info(f"ABER Desgraciado 3 {response} results")
+
             # Update state
             state["response"] = response
             state["intermediate_steps"] = intermediate_steps

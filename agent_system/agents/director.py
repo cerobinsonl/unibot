@@ -3,6 +3,7 @@ from langchain_core.language_models import BaseChatModel
 import re
 import json
 import logging
+import os
 from datetime import datetime
 
 # Import configuration
@@ -222,6 +223,26 @@ Please synthesize this information into a final response for the university staf
             # Log the synthesis result
             logger.info(f"===== SYNTHESIZED RESPONSE =====")
             logger.info(f"{response[:500]}...")
+            
+            # If the response is from integration, check if we should add a mock API notice
+            if current_agent == "integration":
+                # Check if we're using mock APIs
+                mock_mode = os.getenv("MOCK_EXTERNAL_APIS", "true").lower() == "true"
+                
+                if mock_mode:
+                    # Find which external system was accessed 
+                    system_name = None
+                    for step in intermediate_steps:
+                        if step.get("agent") == "integration" and step.get("action", "").startswith("call_"):
+                            action = step.get("action", "")
+                            if "_api" in action:
+                                system_name = action.replace("call_", "").replace("_api", "").upper()
+                                break
+                    
+                    # Add mock notice if we found a system name
+                    if system_name:
+                        mock_notice = f"\n\n[Note: The {system_name} data shown above is from a simulated mock API for demonstration purposes. In a production environment, this would connect to the actual external system.]"
+                        response += mock_notice
             
             # Update state
             working_state["response"] = response

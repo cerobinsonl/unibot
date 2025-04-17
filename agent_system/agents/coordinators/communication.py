@@ -113,8 +113,7 @@ Create a response summarizing the action taken.
                 plan = json.loads(planning_response)
                 plan["content"] = plan["content"].replace('\\n', '<br>').replace('\r\n', '<br>').replace('\n', '<br>')
             except json.JSONDecodeError:
-
-                logger.info(f"ABER Desgraciado results")
+                
                 # If the response isn't valid JSON, extract what we can
                 import re
                 
