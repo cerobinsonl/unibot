@@ -39,25 +39,24 @@ class EmailAgent:
         # Create the email formatting prompt
         self.formatting_prompt = """
 You are the Email Agent for a university administrative system.
-Your role is to format and send emails to university stakeholders.
+Your role is to format and send emails to university stakeholders as **HTML**. Your task is to:
 
-You need to format an email communication for university stakeholders. Your task is to:
-
-1. Format the content in a clear, professional manner appropriate for university communications
-2. Include appropriate greeting and closing
-3. Ensure the tone matches the priority level and audience
-4. Add a university signature block at the end
+1. Format the **existing content** (provided in '{content}') into a clear and professional HTML email body.
+2. Use `<p>` tags for paragraphs and `<br>` tags for single line breaks within paragraphs if necessary. Use `<ul>` and `<li>` for lists to structure the information.
+3. **Do not add an additional greeting at the beginning of the email.** Assume the '{content}' already includes an appropriate salutation.
+4. Ensure the tone matches the priority level and audience.
+5. Add a professional university signature block at the very end of the email within `<p>` tags.
 
 Format your response as a JSON object with these keys:
-- formatted_subject: The revised subject line
-- formatted_content: The full email body with greeting, content, and signature
+- formatted_subject: The revised subject line (plain text)
+- formatted_content: The full **HTML** email body, incorporating the '{content}' with proper HTML structure and the university signature at the end.
 - suggestions: Any suggestions for improving communication effectiveness
 
 Example:
 {{
-  "formatted_subject": "Important Update: Final Exam Schedule Changes",
-  "formatted_content": "Dear Students,\\n\\nI hope this email finds you well. I'm writing to inform you about important changes to the final exam schedule...\\n\\nSincerely,\\n\\nDr. Jane Smith\\nAcademic Affairs Office\\nUniversity Name\\nemail@university.edu",
-  "suggestions": ["Consider sending a follow-up reminder one week before exams", "Include a link to the full exam schedule"]
+    "formatted_subject": "Important Update: Final Exam Schedule Changes",
+    "formatted_content": "<p>This is to inform you about important changes to the final exam schedule:</p><ul><li>New Date: ...</li><li>New Time: ...</li></ul>",
+    "suggestions": ["Consider sending a follow-up reminder one week before exams", "Include a link to the full exam schedule"]
 }}
 
 Recipients: {recipients}
@@ -65,7 +64,7 @@ Subject: {subject}
 Content: {content}
 Priority: {priority}
 
-Please format this into a professional university email.
+Please format the **provided content** into a professional university **HTML** email, ensuring proper structure and adding only the university signature at the end. Do not add extra greetings or closings.
 """
     
     def __call__(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -107,7 +106,7 @@ Please format this into a professional university email.
             except json.JSONDecodeError:
                 # If not valid JSON, use original with minimal formatting
                 formatted_subject = subject
-                formatted_content = f"Dear Recipients,\n\n{content}\n\nBest regards,\nUniversity Administration"
+                formatted_content = f"{content}"
                 suggestions = []
             
             # Determine if we should use mock sending or MailHog
@@ -180,7 +179,7 @@ Please format this into a professional university email.
                 msg['Importance'] = 'High'
             
             # Add content
-            msg.attach(MIMEText(content, 'plain'))
+            msg.attach(MIMEText(content, 'html'))
             
             # Connect to MailHog SMTP server
             server = smtplib.SMTP(self.mailhog_server, self.mailhog_port)

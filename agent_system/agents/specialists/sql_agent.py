@@ -207,131 +207,128 @@ Reply with ONLY the SQL query, nothing else.
             return "Error retrieving database schema: " + str(e)
     
     def __call__(self, task: str) -> Dict[str, Any]:
-        """
-        Process a natural language query by generating and executing SQL
-        
-        Args:
-            task: Natural language description of the data to retrieve
-            
-        Returns:
-            Dictionary containing query results
-        """
-        try:
-            if not self.db_initialized:
-                raise ValueError("SQL database connection was not properly initialized")
-            
-            # Log the query task
-            logger.info(f"Processing SQL query task: {task}")
-            
-            # Generate the SQL query using the LLM
-            formatted_prompt = self.code_prompt.format(
-                schema_info=self.schema_info,
-                task=task
-            )
-            
-            query_response = self.llm.invoke(formatted_prompt)
-            sql_query = query_response.content.strip()
-            
-            # Clean up the query
-            # Remove any markdown formatting
-            sql_query = re.sub(r'^```sql\s*', '', sql_query)
-            sql_query = re.sub(r'\s*```$', '', sql_query)
-            
-            # Remove any comments that might cause issues with the SELECT check
-            sql_query = re.sub(r'--.*?\n', '\n', sql_query)
-            sql_query = re.sub(r'/\*.*?\*/', '', sql_query, flags=re.DOTALL)
-            
-            # Make sure it starts with SELECT (after removing comments)
-            sql_query = sql_query.strip()
-            
-            # Log the generated query
-            logger.info(f"Cleaned SQL query: {sql_query}")
-            
-            # Check if the response indicates the query can't be answered with available schema
-            if "cannot" in sql_query.lower() or "missing" in sql_query.lower() or "don't have" in sql_query.lower():
-                logger.warning(f"LLM indicated schema limitations: {sql_query}")
-                return {
-                    "error": "Cannot execute query with available schema",
-                    "message": sql_query,
-                    "results": [],
-                    "column_names": ["message"],
-                    "row_count": 0,
-                    "is_error": True
-                }
-            
-            # Import necessary modules here to avoid issues
-            from sqlalchemy import text
-            from decimal import Decimal
-            
-            # Execute the query
-            with self.engine.connect() as connection:
-                # Check if it's a SELECT query
-                if not sql_query.strip().upper().startswith("SELECT"):
-                    raise ValueError(f"Only SELECT queries are allowed for safety. Query starts with: {sql_query[:20]}")
-                
-                # Execute the query
-                try:
-                    result = connection.execute(text(sql_query))
-                    
-                    # Get column names (convert to list to avoid RMKeyView issues)
-                    column_names = list(result.keys())
-                    
-                    # Fetch all rows
-                    rows = []
-                    for row in result:
-                        # Convert row to dictionary
-                        row_dict = {}
-                        for i, col in enumerate(column_names):
-                            value = row[i]
-                            # Convert non-serializable types
-                            if isinstance(value, Decimal):
-                                row_dict[col] = float(value)
-                            elif hasattr(value, 'isoformat'):
-                                row_dict[col] = value.isoformat()
-                            else:
-                                row_dict[col] = value
-                        rows.append(row_dict)
-                        
-                    # If no results found, provide clear feedback
-                    if len(rows) == 0:
-                        logger.info("Query returned zero results")
-                        return {
-                            "query": sql_query,
-                            "results": [],
-                            "column_names": column_names,
-                            "row_count": 0,
-                            "message": "The query executed successfully but returned no results."
-                        }
-                    
-                    # Return the results
+            """
+            Process a natural language query by generating and executing SQL
+
+            Args:
+                task: Natural language description of the data to retrieve
+
+            Returns:
+                Dictionary containing query results
+            """
+            try:
+                if not self.db_initialized:
+                    raise ValueError("SQL database connection was not properly initialized")
+
+                # Log the query task
+                logger.info(f"Processing SQL query task: {task}")
+
+                # Generate the SQL query using the LLM
+                formatted_prompt = self.code_prompt.format(
+                    schema_info=self.schema_info,
+                    task=task
+                )
+
+                query_response = self.llm.invoke(formatted_prompt)
+                sql_query = query_response.content.strip()
+
+                # Clean up the query
+                # Remove any markdown formatting
+                sql_query = re.sub(r'^```sql\s*', '', sql_query)
+                sql_query = re.sub(r'\s*```$', '', sql_query)
+
+                # Remove any comments that might cause issues with the SELECT check
+                sql_query = re.sub(r'--.*?\n', '\n', sql_query)
+                sql_query = re.sub(r'/\*.*?\*/', '', sql_query, flags=re.DOTALL)
+
+                # Make sure it starts with SELECT or WITH (after cleaning)
+                normalized_query = sql_query.strip().upper()
+                if not normalized_query.startswith("SELECT") and not normalized_query.startswith("WITH"):
+                    raise ValueError(f"Only SELECT or WITH queries are allowed for safety. Query starts with: {sql_query[:20]}")
+
+                # Log the generated query
+                logger.info(f"Cleaned SQL query: {sql_query}")
+
+                # Check if the response indicates the query can't be answered with available schema
+                if "cannot" in sql_query.lower() or "missing" in sql_query.lower() or "don't have" in sql_query.lower():
+                    logger.warning(f"LLM indicated schema limitations: {sql_query}")
                     return {
-                        "query": sql_query,
-                        "results": rows,
-                        "column_names": column_names,
-                        "row_count": len(rows)
-                    }
-                    
-                except Exception as db_error:
-                    logger.error(f"Database error executing query: {db_error}")
-                    
-                    # Return with specific database error
-                    return {
-                        "error": f"Database error: {str(db_error)}",
-                        "query": sql_query,
-                        "results": [{"error_message": str(db_error)}],
-                        "column_names": ["error_message"],
-                        "row_count": 1,
+                        "error": "Cannot execute query with available schema",
+                        "message": sql_query,
+                        "results": [],
+                        "column_names": ["message"],
+                        "row_count": 0,
                         "is_error": True
                     }
-            
-        except Exception as e:
-            logger.error(f"Error in SQL Agent: {e}", exc_info=True)
-            
-            # Return error information
-            return {
-                "error": str(e),
-                "results": [{"error_message": str(e)}],
-                "column_names": ["error_message"],
-                "row_count": 1,
-                "is_error": True
-            }
+
+                # Import necessary modules here to avoid issues
+                from sqlalchemy import text
+                from decimal import Decimal
+
+                # Execute the query
+                with self.engine.connect() as connection:
+                    try:
+                        result = connection.execute(text(sql_query))
+
+                        # Get column names (convert to list to avoid RMKeyView issues)
+                        column_names = list(result.keys())
+
+                        # Fetch all rows
+                        rows = []
+                        for row in result:
+                            # Convert row to dictionary
+                            row_dict = {}
+                            for i, col in enumerate(column_names):
+                                value = row[i]
+                                # Convert non-serializable types
+                                if isinstance(value, Decimal):
+                                    row_dict[col] = float(value)
+                                elif hasattr(value, 'isoformat'):
+                                    row_dict[col] = value.isoformat()
+                                else:
+                                    row_dict[col] = value
+                            rows.append(row_dict)
+
+                        # If no results found, provide clear feedback
+                        if len(rows) == 0:
+                            logger.info("Query returned zero results")
+                            return {
+                                "query": sql_query,
+                                "results": [],
+                                "column_names": column_names,
+                                "row_count": 0,
+                                "message": "The query executed successfully but returned no results."
+                            }
+
+                        # Return the results
+                        return {
+                            "query": sql_query,
+                            "results": rows,
+                            "column_names": column_names,
+                            "row_count": len(rows)
+                        }
+
+                    except Exception as db_error:
+                        logger.error(f"Database error executing query: {db_error}")
+
+                        # Return with specific database error
+                        return {
+                            "error": f"Database error: {str(db_error)}",
+                            "query": sql_query,
+                            "results": [{"error_message": str(db_error)}],
+                            "column_names": ["error_message"],
+                            "row_count": 1,
+                            "is_error": True
+                        }
+
+            except Exception as e:
+                logger.error(f"Error in SQL Agent: {e}", exc_info=True)
+
+                # Return error information
+                return {
+                    "error": str(e),
+                    "results": [{"error_message": str(e)}],
+                    "column_names": ["error_message"],
+                    "row_count": 1,
+                    "is_error": True
+                }

@@ -111,7 +111,10 @@ Create a response summarizing the action taken.
             # Parse the planning response
             try:
                 plan = json.loads(planning_response)
+                plan["content"] = plan["content"].replace('\\n', '<br>').replace('\r\n', '<br>').replace('\n', '<br>')
             except json.JSONDecodeError:
+
+                logger.info(f"ABER Desgraciado results")
                 # If the response isn't valid JSON, extract what we can
                 import re
                 
@@ -122,8 +125,8 @@ Create a response summarizing the action taken.
                 subject = subject_match.group(1) if subject_match else "University Communication"
                 
                 content_match = re.search(r'"content"\s*:\s*"([^"]+)"', planning_response)
-                content = content_match.group(1) if content_match else user_input
-                
+                content = content_match.group(1).replace('\\n', '<br>') if content_match else user_input
+
                 recipient_query_match = re.search(r'"recipient_query"\s*:\s*"([^"]+)"', planning_response)
                 recipient_query = recipient_query_match.group(1) if recipient_query_match else "Get email addresses of all students"
                 
@@ -137,7 +140,9 @@ Create a response summarizing the action taken.
                     "content": content,
                     "priority": priority
                 }
-            
+
+                logger.info(f"ABER email {plan} results")
+
             # Add planning step to intermediate steps
             intermediate_steps.append({
                 "agent": "communication",
@@ -281,9 +286,6 @@ Create a response summarizing the action taken.
             # Use a more flexible query that handles different possible academic standing values
             queries.append("Find email addresses of all students whose AcademicStanding contains 'Probation' or is exactly 'Probation'")
             
-            # Add a GPA-based fallback
-            queries.append("Find email addresses of all students with a GPA below 2.5")
-            
         elif is_financial_aid:
             # For financial aid, explore financial aid status values
             queries.append("Find all distinct financial aid status values available in the database")
@@ -332,14 +334,16 @@ Create a response summarizing the action taken.
             if "is_error" in sql_result:
                 logger.info(f"Query error status: {sql_result['is_error']}")
             
+            ABEEER = sql_result
+
             if "results" in sql_result:
-                logger.info(f"Query returned {len(sql_result['results'])} results")
+                logger.info(f"ABER Query returned {len(sql_result['results'])} results")
+                logger.info(f"ABER Query returned {ABEEER} results")
             
             # Parse the result to find emails
-            if not sql_result.get("is_error", True) and sql_result.get("results"):
+            if "results" in sql_result and sql_result["results"]:
                 results = sql_result.get("results", [])
                 logger.info(f"Processing {len(results)} rows from query result")
-                
                 # Extract potential email addresses from results
                 emails_found = 0
                 for row in results:
@@ -374,40 +378,41 @@ Create a response summarizing the action taken.
                 if "error" in sql_result:
                     logger.warning(f"Query error: {sql_result['error']}")
         
-        # Step 4: Try one direct GPA query as a last resort
-        last_resort_query = """
-        SELECT "Person"."EmailAddress"
-        FROM "Person"
-        JOIN "PsStudentAcademicRecord" ON "Person"."PersonId" = "PsStudentAcademicRecord"."PersonId"
-        WHERE "PsStudentAcademicRecord"."GPA" < 2.5;
-        """
-        
-        logger.info("Trying last resort direct GPA query")
-        
-        try:
-            # Execute the query directly using SQL agent's raw_query method if available
-            if hasattr(self.sql_agent, 'execute_raw_query'):
-                direct_result = self.sql_agent.execute_raw_query(last_resort_query)
-            else:
-                # Fall back to regular query method with the raw SQL
-                direct_result = self.sql_agent(f"Execute this exact SQL query: {last_resort_query}")
+        # # Step 4: Try one direct GPA query as a last resort
+        # if not recipients:
+        #     last_resort_query = """
+        #     SELECT "Person"."EmailAddress"
+        #     FROM "Person"
+        #     JOIN "PsStudentAcademicRecord" ON "Person"."PersonId" = "PsStudentAcademicRecord"."PersonId"
+        #     WHERE "PsStudentAcademicRecord"."GPA" < 2.5;
+        #     """
             
-            # Log the result
-            logger.info(f"Last resort query result: {direct_result}")
+        #     logger.info("Trying last resort direct GPA query")
             
-            # Process the results directly
-            if "results" in direct_result and direct_result["results"]:
-                for row in direct_result["results"]:
-                    for value in row.values():
-                        if isinstance(value, str) and "@" in value:
-                            recipients.append(value)
+        #     try:
+        #         # Execute the query directly using SQL agent's raw_query method if available
+        #         if hasattr(self.sql_agent, 'execute_raw_query'):
+        #             direct_result = self.sql_agent.execute_raw_query(last_resort_query)
+        #         else:
+        #             # Fall back to regular query method with the raw SQL
+        #             direct_result = self.sql_agent(f"Execute this exact SQL query: {last_resort_query}")
                 
-                logger.info(f"Last resort query found {len(recipients)} email addresses")
+        #         # Log the result
+        #         logger.info(f"Last resort query result: {direct_result}")
                 
-                if recipients:
-                    return recipients
-        except Exception as e:
-            logger.error(f"Error executing last resort query: {e}")
+        #         # Process the results directly
+        #         if "results" in direct_result and direct_result["results"]:
+        #             for row in direct_result["results"]:
+        #                 for value in row.values():
+        #                     if isinstance(value, str) and "@" in value:
+        #                         recipients.append(value)
+                    
+        #             logger.info(f"Last resort query found {len(recipients)} email addresses")
+                    
+        #             if recipients:
+        #                 return recipients
+        #     except Exception as e:
+        #         logger.error(f"Error executing last resort query: {e}")
         
         # Step 5: If all queries failed to find recipients, use fallback
         logger.warning("No recipients found with database queries, using fallbacks")
