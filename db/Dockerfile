@@ -1,8 +1,8 @@
 FROM postgres:14
 
 # Copy initialization scripts
-COPY db/init.sql /docker-entrypoint-initdb.d/init.sql
-COPY db/seeds.sql /docker-entrypoint-initdb.d/seeds.sql
+COPY init.sql /docker-entrypoint-initdb.d/init.sql
+COPY seeds.sql /docker-entrypoint-initdb.d/seeds.sql
 
 # PostgreSQL configuration will be set through environment variables
 # when deploying to Cloud Run
