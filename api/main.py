@@ -5,6 +5,7 @@ import uvicorn
 import os
 import logging
 from contextlib import asynccontextmanager
+from routers import chat, visualizations, websockets, mock_api_docs
 
 # Configure logging
 logging.basicConfig(
@@ -51,6 +52,7 @@ app.add_middleware(
 app.include_router(chat.router)
 app.include_router(visualizations.router)
 app.include_router(websockets.router)
+app.include_router(mock_api_docs.router)
 
 # Health check endpoint
 @app.get("/health")

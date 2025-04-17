@@ -12,6 +12,7 @@ from utils.tracer import tracer
 # Import graph workflow
 from graph.workflow import create_workflow, AgentState
 from config import settings
+from mock_api import router as mock_api_router
 
 # Configure logging
 logging.basicConfig(
@@ -49,6 +50,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(mock_api_router)
 
 @app.get("/health")
 async def health_check():

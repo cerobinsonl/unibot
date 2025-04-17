@@ -2,6 +2,7 @@ from typing import Dict, List, Any, Optional
 import json
 import logging
 from datetime import datetime
+import os
 
 # Import configuration
 from config import settings, AGENT_CONFIGS, get_llm
@@ -24,7 +25,10 @@ class IntegrationCoordinator:
         # Create the LLM using the helper function
         self.llm = get_llm("integration_coordinator")
         
-        # Create the task planning prompt
+        # Check if we're using mock APIs
+        self.mock_mode = os.getenv("MOCK_EXTERNAL_APIS", "true").lower() == "true"
+        
+        # Create the task planning prompt - fixing the format issues with the JSON examples
         self.planning_prompt = """
 You are the Integration Coordinator for a university administrative system.
 Your job is to manage connections to external systems like the LMS, SIS, and CRM.
@@ -42,26 +46,26 @@ Format your response as a JSON object with these keys:
 - purpose: Why this data is being requested
 
 Example for LMS access:
-{
+{{
   "system": "lms",
   "endpoint": "courses/assignments",
-  "parameters": {
+  "parameters": {{
     "course_id": "BIO101",
     "term": "Fall2023"
-  },
+  }},
   "purpose": "Retrieve assignment submission rates for Biology 101"
-}
+}}
 
 Example for SIS access:
-{
+{{
   "system": "sis",
   "endpoint": "student/enrollment",
-  "parameters": {
+  "parameters": {{
     "department": "Computer Science",
     "year": "2023"
-  },
+  }},
   "purpose": "Get enrollment statistics for Computer Science department"
-}
+}}
 
 Important: Only request data that would be appropriate for university administrative staff to access.
 
@@ -84,6 +88,8 @@ Your response should:
 3. Present important metrics or statistics
 4. Note any limitations or context for interpreting the data
 5. Offer to get additional related information if needed
+
+{mock_notice}
 
 Be professional and concise, as appropriate for university administrative staff.
 
@@ -208,11 +214,17 @@ Create a response synthesizing this information.
                 })
             
             # Step 3: Synthesize results
+            # Add mock notice if in mock mode
+            mock_notice = ""
+            if self.mock_mode:
+                mock_notice = "IMPORTANT: The data provided is from a mock API for demonstration purposes. In a production environment, this would be actual data from the real external system."
+            
             synthesis_input = {
                 "user_input": user_input,
                 "system": plan["system"].upper(),  # Make it uppercase for readability
                 "endpoint": plan["endpoint"],
-                "api_results": json.dumps(api_result, indent=2)
+                "api_results": json.dumps(api_result, indent=2),
+                "mock_notice": mock_notice
             }
             
             formatted_prompt = self.synthesis_prompt.format(**synthesis_input)

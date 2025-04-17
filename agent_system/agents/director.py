@@ -36,6 +36,13 @@ You must categorize each user request into one of these categories:
 4. INTEGRATION - For retrieving data from external systems
 5. CLARIFICATION - When you need more information from the user
 
+IMPORTANT ROUTING GUIDELINES:
+- Use ROUTE_TO_INTEGRATION for requests that specifically mention external systems like:
+  * Learning Management System (LMS)
+  * Student Information System (SIS)
+  * Customer Relationship Management (CRM)
+- Use ROUTE_TO_DATA_ANALYSIS for queries about data that can be answered from the local database
+
 When responding, include EXACTLY ONE of these routing tags at the beginning of your response:
 - ROUTE_TO_DATA_ANALYSIS
 - ROUTE_TO_COMMUNICATION

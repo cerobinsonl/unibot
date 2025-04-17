@@ -135,7 +135,7 @@ DECLARE
     start_year INT;
     end_year INT;
     term TEXT;
-    num_students INT := 120; -- Slightly more than 100 for natural attrition
+    num_students INT := 1000; -- Slightly more than 100 for natural attrition
     current_term TEXT;
     course_disciplines TEXT[] := ARRAY['Computer Science', 'Mathematics', 'Physics', 'Biology', 'Economics', 'Psychology', 'Literature'];
     

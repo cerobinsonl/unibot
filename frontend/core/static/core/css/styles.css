@@ -25,7 +25,7 @@ body {
 /* --- Contenedor de Tarjetas --- */
 .cards-container {
   display: grid;
-  grid-template-columns: repeat(3, 1fr); /* Changed to 3 columns */
+  grid-template-columns: repeat(2, 1fr);
   gap: 15px; /* Reduced gap */
   padding: 15px; /* Reduced padding */
   max-width: 1000px;
