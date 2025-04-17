@@ -4,9 +4,10 @@ import uuid
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+import os
 
 # Update the microservice URL to point to our agent system API
-AGENT_API_URL = 'http://api:8080'  # This is the FastAPI service from our agent system
+AGENT_API_URL = os.getenv("AGENT_API_URL")  # This is the FastAPI service from our agent system
 
 def home(request):
     """
