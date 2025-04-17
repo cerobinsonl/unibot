@@ -32,14 +32,6 @@ TEMPLATES = [
 WSGI_APPLICATION = 'frontend.wsgi.application'
 ASGI_APPLICATION = 'frontend.asgi.application'
 
-# DB mínima (SQLite) si no usas funcionalidades de Django que requieran DB
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
-}
-
 DEBUG = True
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
