@@ -31,7 +31,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://${DB_USER:-admin}:${DB_PASSWORD:-password}@postgres:5432/${DB_NAME:-university}
       - AGENT_SERVICE_URL=http://agent-system:8000
-      - FRONT_SERVICE_URL=http://frontend.8000
+      - FRONT_SERVICE_URL=http://frontend:8000
     ports:
       - "8080:8080"
     depends_on:

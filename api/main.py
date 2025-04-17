@@ -42,7 +42,7 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONT_URL")],#["*"],  # In production, restrict to your Django domain
+    allow_origins=[os.getenv("FRONT_SERVICE_URL")],#["*"],  # In production, restrict to your Django domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
