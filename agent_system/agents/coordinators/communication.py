@@ -2,7 +2,7 @@ import logging
 import json
 from datetime import datetime
 from typing import Dict, Any, List
-
+import re
 from config import settings, AGENT_CONFIGS, get_llm
 from agents.specialists.email_agent import EmailAgent
 from agents.specialists.sql_agent import SQLAgent
@@ -91,11 +91,15 @@ Please write a concise confirmation message summarizing the action taken.
         plan_response = self.llm.invoke(plan_prompt).content
         self.logger.info(f"Plan response:\n{plan_response}")
 
+        # Strip Markdown fences before parsing
+        plan_text = re.sub(r"^```(?:json)?\s*", "", plan_response, flags=re.MULTILINE)
+        plan_text = re.sub(r"\s*```$", "", plan_text, flags=re.MULTILINE)
+
         try:
-            plan = json.loads(plan_response)
+            plan = json.loads(plan_text)
         except json.JSONDecodeError:
-            self.logger.error("Failed to parse plan JSON, aborting")
-            state["response"] = "Sorry, I couldn't understand how to plan your request."
+            self.logger.error("Failed to parse plan JSON after stripping fences", exc_info=True)
+            state["response"] = "Sorry, I couldn't understand the plan from the LLM."
             state["current_agent"] = "communication"
             return state
 
