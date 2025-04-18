@@ -4,6 +4,7 @@ from typing import TypedDict, List, Dict, Any, Optional, Annotated
 import logging
 import json
 from pydantic import BaseModel
+import re
 
 # Import config
 from config import settings, AGENT_CONFIGS, get_llm
@@ -179,6 +180,7 @@ def create_workflow(streaming: bool = False) -> StateGraph:
     workflow.add_node("communication", communication_with_tracing)
     workflow.add_node("data_management", data_management_with_tracing)
     workflow.add_node("integration", integration_with_tracing)
+    workflow.add_node("synthetic_data", synthetic_data_with_tracing)
     
     # Define the director's routing logic
     def route_request(state: GraphState) -> str:
@@ -232,7 +234,7 @@ def create_workflow(streaming: bool = False) -> StateGraph:
             elif "ROUTE_TO_INTEGRATION" in response:
                 route_result = "integration"
             elif "ROUTE_TO_SYNTHETIC_DATA" in response:
-                route_result = "data_synthetic"
+                route_result = "synthetic_data"
             elif "FINAL_RESPONSE" in response:
                 # For final responses, clean up the prefix and update the response
                 cleaned_response = re.sub(r'^FINAL_RESPONSE\s*', '', response)
@@ -268,7 +270,7 @@ def create_workflow(streaming: bool = False) -> StateGraph:
             "communication": "communication",
             "data_management": "data_management",
             "integration": "integration",
-            "data_synthetic":  "data_synthetic",
+            "synthetic_data":  "synthetic_data",
             END: END
         }
     )
@@ -278,7 +280,7 @@ def create_workflow(streaming: bool = False) -> StateGraph:
     workflow.add_edge("communication", "director")
     workflow.add_edge("data_management", "director")
     workflow.add_edge("integration", "director")
-    workflow.add_edge("data_synthetic",  "director")
+    workflow.add_edge("synthetic_data",  "director")
     
     # Create and add the observer for monitoring
     #observer = LangGraphObserver()
