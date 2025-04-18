@@ -1,7 +1,9 @@
 version: '3.8'
 
 services:
-  # Database service
+  # ----------------------
+  # Local PostgreSQL DB
+  # ----------------------
   postgres:
     image: postgres:14
     container_name: university-db
@@ -24,12 +26,21 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # ----------------------
   # FastAPI service
+  # ----------------------
   api:
     build: ./api
     container_name: university-api
     environment:
+      # Database settings
+      - DB_USER=${DB_USER:-admin}
+      - DB_PASSWORD=${DB_PASSWORD:-password}
+      - DB_NAME=${DB_NAME:-university}
       - DATABASE_URL=postgresql://${DB_USER:-admin}:${DB_PASSWORD:-password}@postgres:5432/${DB_NAME:-university}
+      # Connector (unused locally)
+      - INSTANCE_CONNECTION_NAME=${INSTANCE_CONNECTION_NAME:-}
+      # Agent & Front URLs
       - AGENT_SERVICE_URL=http://agent-system:8000
       - FRONT_SERVICE_URL=http://frontend:8000
     ports:
@@ -43,12 +54,21 @@ services:
       - ./api:/app
     restart: unless-stopped
 
+  # ----------------------
   # Agent System service
+  # ----------------------
   agent-system:
     build: ./agent_system
     container_name: university-agent-system
     environment:
+      # Database settings
+      - DB_USER=${DB_USER:-admin}
+      - DB_PASSWORD=${DB_PASSWORD:-password}
+      - DB_NAME=${DB_NAME:-university}
       - DATABASE_URL=postgresql://${DB_USER:-admin}:${DB_PASSWORD:-password}@postgres:5432/${DB_NAME:-university}
+      # Cloud SQL Connector will use this when set in Cloud Run
+      - INSTANCE_CONNECTION_NAME=${INSTANCE_CONNECTION_NAME:-}
+      # LLM / API keys
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
@@ -56,6 +76,7 @@ services:
       - API_DEBUG=${API_DEBUG:-false}
       - AGENT_DEBUG=${AGENT_DEBUG:-false}
       - MOCK_EXTERNAL_APIS=${MOCK_EXTERNAL_APIS:-true}
+      # SMTP for email testing
       - SMTP_SERVER=mailhog
       - SMTP_PORT=1025
       - USE_MAILHOG=true
@@ -71,18 +92,22 @@ services:
       - ./visual_debug:/app/visual_debug
     restart: unless-stopped
 
+  # ----------------------
   # MailHog for email testing
+  # ----------------------
   mailhog:
     image: mailhog/mailhog
     container_name: university-mailhog
     ports:
-      - "1025:1025"  # SMTP server
-      - "8025:8025"  # Web UI
+      - "1025:1025"
+      - "8025:8025"
     networks:
       - university-network
     restart: unless-stopped
 
+  # ----------------------
   # Django Frontend
+  # ----------------------
   frontend:
     build: ./frontend
     container_name: university-frontend

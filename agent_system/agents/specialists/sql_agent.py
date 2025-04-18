@@ -29,15 +29,9 @@ class SQLAgent:
             import sqlalchemy
             from sqlalchemy import create_engine, text
             from decimal import Decimal
+            from config import get_engine
             
-            # Connect to the database using environment variables or settings
-            import sqlalchemy
-            from sqlalchemy import create_engine, text
-            from decimal import Decimal
-
-            # Connect to the database using environment variables or settings
-            conn_string = settings.DATABASE_URL
-            self.engine = create_engine(conn_string)
+            self.engine = get_engine()
             self.db_initialized = True
             logger.info("SQL Agent DB connection initialized successfully")
 

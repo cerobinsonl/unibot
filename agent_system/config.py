@@ -18,6 +18,12 @@ class Settings(BaseSettings):
         "postgresql://admin:password@postgres:5432/university"
     )
     
+    # Cloud SQL connector settings
+    INSTANCE_CONNECTION_NAME: Optional[str] = os.getenv("INSTANCE_CONNECTION_NAME", None)
+    DB_USER: str = os.getenv("DB_USER", "admin")
+    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "password")
+    DB_NAME: str = os.getenv("DB_NAME", "university")
+
     # Agent Configuration
     DIRECTOR_TEMPERATURE: float = 0.1
     COORDINATOR_TEMPERATURE: float = 0.2
@@ -281,3 +287,41 @@ def get_llm(agent_type: str = "director"):
             temperature=temperature,
             convert_system_message_to_human=True  # Fix for system message error
         )
+    
+
+from sqlalchemy import create_engine
+from google.cloud.sql.connector import Connector, IPTypes
+
+_connector: Optional[Connector] = None
+
+def get_engine():
+    """
+    Returns a SQLAlchemy Engine that connects to:
+      - Cloud SQL (via Connector) if INSTANCE_CONNECTION_NAME is set
+      - otherwise DATABASE_URL (local Docker or other env)
+    """
+    # 1) Cloud SQL path
+    if settings.INSTANCE_CONNECTION_NAME:
+        global _connector
+        if _connector is None:
+            _connector = Connector()
+
+        def getconn():
+            return _connector.connect(
+                settings.INSTANCE_CONNECTION_NAME,
+                "pg8000",
+                user=settings.DB_USER,
+                password=settings.DB_PASSWORD,
+                db=settings.DB_NAME,
+                ip_type=IPTypes.PUBLIC,
+            )
+
+        return create_engine(
+            "postgresql+pg8000://",
+            creator=getconn,
+        )
+
+    # 2) Local fallback
+    if not settings.DATABASE_URL:
+        raise RuntimeError("DATABASE_URL must be set in local mode")
+    return create_engine(settings.DATABASE_URL)
