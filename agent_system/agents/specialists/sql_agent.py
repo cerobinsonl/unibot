@@ -192,151 +192,133 @@ class SQLAgent:
     
     def __call__(self, task: str) -> Dict[str, Any]:
         """
-        Translate a natural-language request into SQL (SELECT, INSERT, UPDATE, DELETE),
-        execute it, and return structured results or error information.
+        Process a natural language query or DDL/DML statement by generating
+        (if needed) and executing SQL against the university database.
 
         Args:
-            task: Natural-language description of the query or DML operation.
+            task: Either a natural language request (SELECT/WITH) or a raw
+                  SQL DDL/DML statement.
 
         Returns:
-            A dict with one of these shapes:
-            - SELECT/WITH:
-                {
-                "is_error": False,
-                "query": "<generated SQL>",
-                "results": [ {col: val, …}, … ],
-                "column_names": [ … ],
-                "row_count": N
-                }
-            - INSERT/UPDATE/DELETE:
-                {
-                "is_error": False,
-                "query": "<generated SQL>",
-                "affected_rows": N
-                }
-            - On error:
-                {
-                "is_error": True,
-                "error": "<error message>",
-                "query": "<generated SQL, if any>",
-                // For SELECT errors:
-                "results": [{ "error_message": "<db error>" }],
-                "column_names": ["error_message"],
-                "row_count": 1
-                }
+            Dictionary containing query results or execution status.
         """
         try:
-            # 0. Ensure DB is ready
             if not self.db_initialized:
                 raise ValueError("SQL database connection was not properly initialized")
 
+            # Log the incoming task
             logger.info(f"Processing SQL task: {task}")
 
-            # 1. Generate SQL (+ type) via LLM
-            formatted_prompt = self.code_prompt.format(
-                schema_info=self.schema_info,
-                task=task
-            )
-            llm_resp = self.llm.invoke(formatted_prompt).content
+            # Decide whether this is raw SQL or NL prompt
+            if task.strip().upper().startswith(("SELECT", "WITH")):
+                # Natural‐language path: go through the LLM to generate a SELECT
+                formatted_prompt = self.code_prompt.format(
+                    schema_info=self.schema_info,
+                    task=task
+                )
+                query_response = self.llm.invoke(formatted_prompt)
+                sql = query_response.content.strip()
+            else:
+                # Raw‐SQL path (DDL/DML) – run it directly
+                sql = task.strip()
 
-            # 2. Clean markdown fences
-            import re, json
-            sql_text = llm_resp.strip()
-            sql_text = re.sub(r"^```(?:sql|json)?\s*", "", sql_text, flags=re.MULTILINE)
-            sql_text = re.sub(r"\s*```$", "", sql_text, flags=re.MULTILINE)
-            # remove any inline comments
-            sql_text = re.sub(r"--.*?\n", "\n", sql_text)
-            sql_text = re.sub(r"/\*.*?\*/", "", sql_text, flags=re.DOTALL)
+            # Clean up triple‐backticks and comments
+            sql = re.sub(r'^```(?:sql)?\s*', '', sql)
+            sql = re.sub(r'\s*```$', '', sql)
+            sql = re.sub(r'--.*?\n', '\n', sql)
+            sql = re.sub(r'/\*.*?\*/', '', sql, flags=re.DOTALL)
 
-            # 3. Detect JSON wrapper for type+sql or assume pure SQL
-            op_type = "select"
-            try:
-                payload = json.loads(sql_text)
-                sql = payload.get("sql", "").strip()
-                op_type = payload.get("type", "select").lower()
-            except json.JSONDecodeError:
-                sql = sql_text
+            # Safety check: only allow SELECT/WITH through LLM path,
+            # and for raw‐SQL path we'll allow CREATE/INSERT/UPDATE/DELETE/DROP
+            normalized = sql.strip().upper()
+            first_word = normalized.split()[0]
+            if first_word not in ("SELECT", "WITH", "CREATE", "INSERT", "UPDATE", "DELETE", "DROP"):
+                raise ValueError(
+                    f"Unsafe or unsupported SQL statement: {first_word}"
+                )
 
-            sql = sql.strip()
-            logger.info(f"Cleaned SQL ({op_type}): {sql}")
+            # If LLM told us it can't generate, bail out
+            if any(kw in sql.lower() for kw in ("cannot", "missing", "don't have")):
+                logger.warning("LLM indicated schema limitation: " + sql)
+                return {
+                    "error": "Cannot execute query with available schema",
+                    "message": sql,
+                    "results": [],
+                    "column_names": ["message"],
+                    "row_count": 0,
+                    "is_error": True
+                }
 
-            # 4. Safety check for SELECT path
-            is_select = op_type == "select"
-            if is_select:
-                head = sql[:10].upper()
-                if not (head.startswith("SELECT") or head.startswith("WITH")):
-                    raise ValueError(f"Only SELECT/WITH queries allowed for read operations; got: {sql[:20]}")
-
-            # 5. Execute via SQLAlchemy
+            # Execute against the database
             from sqlalchemy import text
             from decimal import Decimal
 
-            if op_type == "select":
-                with self.engine.connect() as conn:
-                    result = conn.execute(text(sql))
-                    col_names = list(result.keys())
-                    rows = []
-                    for r in result:
-                        row = {}
-                        for idx, col in enumerate(col_names):
-                            val = r[idx]
-                            if isinstance(val, Decimal):
-                                row[col] = float(val)
-                            elif hasattr(val, "isoformat"):
-                                row[col] = val.isoformat()
-                            elif isinstance(val, bytes):
-                                row[col] = val.decode("utf-8", errors="replace")
-                            else:
-                                row[col] = val
-                        rows.append(row)
-                    if not rows:
-                        logger.info("Query executed successfully but returned no results")
+            with self.engine.connect() as connection:
+                try:
+                    result = connection.execute(text(sql))
+
+                    # If this was a SELECT/WITH, build a results set
+                    if first_word in ("SELECT", "WITH"):
+                        cols = list(result.keys())
+                        rows = []
+                        for row in result:
+                            rowd = {}
+                            for i, c in enumerate(cols):
+                                v = row[i]
+                                if isinstance(v, Decimal):
+                                    rowd[c] = float(v)
+                                elif hasattr(v, "isoformat"):
+                                    rowd[c] = v.isoformat()
+                                elif isinstance(v, bytes):
+                                    rowd[c] = v.decode("utf-8", "ignore")
+                                else:
+                                    rowd[c] = v
+                            rows.append(rowd)
+
+                        if not rows:
+                            return {
+                                "query": sql,
+                                "results": [],
+                                "column_names": cols,
+                                "row_count": 0,
+                                "message": "The query executed successfully but returned no results."
+                            }
                         return {
-                            "is_error": False,
+                            "query": sql,
+                            "results": rows,
+                            "column_names": cols,
+                            "row_count": len(rows)
+                        }
+
+                    # Otherwise it was DDL/DML, just report success
+                    else:
+                        return {
                             "query": sql,
                             "results": [],
-                            "column_names": col_names,
+                            "column_names": [],
                             "row_count": 0,
-                            "message": "The query executed successfully but returned no results."
+                            "message": f"{first_word} executed successfully."
                         }
-                    return {
-                        "is_error": False,
-                        "query": sql,
-                        "results": rows,
-                        "column_names": col_names,
-                        "row_count": len(rows)
-                    }
 
-            else:
-                # DML: INSERT, UPDATE, DELETE
-                # use transactional execution for commit
-                with self.engine.begin() as conn:
-                    result = conn.execute(text(sql))
-                    affected = result.rowcount
+                except Exception as db_err:
+                    err = str(db_err)
+                    logger.error(f"Database error executing SQL: {err}")
                     return {
-                        "is_error": False,
+                        "error": f"Database error: {err}",
                         "query": sql,
-                        "affected_rows": affected
+                        "results": [{"error_message": err}],
+                        "column_names": ["error_message"],
+                        "row_count": 1,
+                        "is_error": True
                     }
 
         except Exception as e:
-            logger.error(f"Error in SQLAgent __call__: {e}", exc_info=True)
-            # On failure, return structured error
-            if 'sql' in locals():
-                # if SQL was generated, include it
-                return {
-                    "is_error": True,
-                    "error": str(e),
-                    "query": sql,
-                    "results": [{"error_message": str(e)}],
-                    "column_names": ["error_message"],
-                    "row_count": 1
-                }
-            else:
-                return {
-                    "is_error": True,
-                    "error": str(e),
-                    "results": [{"error_message": str(e)}],
-                    "column_names": ["error_message"],
-                    "row_count": 1
-                }
+            err = str(e)
+            logger.error(f"Error in SQLAgent __call__: {err}", exc_info=True)
+            return {
+                "error": err,
+                "results": [{"error_message": err}],
+                "column_names": ["error_message"],
+                "row_count": 1,
+                "is_error": True
+            }
