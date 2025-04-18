@@ -77,8 +77,6 @@ Please write a concise confirmation message summarizing the action taken.
         user_input = state.get("user_input", "")
         steps: List[Dict[str, Any]] = state.setdefault("intermediate_steps", [])
 
-        self.logger.info(f"Coordinator start: {user_input}")
-
         # 1. Plan the communication, injecting schema
         schema_info = self.sql_agent.schema_info
         self.logger.info("Injecting schema into planning prompt")
@@ -87,9 +85,8 @@ Please write a concise confirmation message summarizing the action taken.
             + "\n\nDatabase schema:\n"
             + schema_info
         ).format(user_input=user_input)
-        self.logger.info(f"Plan prompt:\n{plan_prompt}")
+ 
         plan_response = self.llm.invoke(plan_prompt).content
-        self.logger.info(f"Plan response:\n{plan_response}")
 
         # Strip Markdown fences before parsing
         plan_text = re.sub(r"^```(?:json)?\s*", "", plan_response, flags=re.MULTILINE)
@@ -130,9 +127,8 @@ Please write a concise confirmation message summarizing the action taken.
                 original_query=recipient_query,
                 schema_info=schema_info
             )
-            self.logger.info(f"Correction prompt:\n{correction_prompt}")
+
             corrected = self.llm.invoke(correction_prompt).content.strip()
-            self.logger.info(f"Corrected recipient_query: {corrected}")
 
             steps.append({
                 "agent": "communication",
@@ -150,7 +146,7 @@ Please write a concise confirmation message summarizing the action taken.
                 for v in row.values():
                     if isinstance(v, str) and "@" in v:
                         recipients.append(v)
-            self.logger.info(f"Extracted recipients: {recipients}")
+            self.logger.info(f"# of Extracted recipients: {len(recipients)}")
         else:
             self.logger.warning("No valid recipients found, using fallback address")
 
@@ -172,7 +168,6 @@ Please write a concise confirmation message summarizing the action taken.
                 "content": plan["content"],
                 "priority": plan["priority"]
             }
-            self.logger.info(f"EmailAgent input: {email_input}")
             email_result = self.email_agent(email_input)
             self.logger.info(f"EmailAgent result: {email_result}")
             steps.append({
@@ -196,7 +191,6 @@ Please write a concise confirmation message summarizing the action taken.
             subject=plan["subject"],
             result=email_result.get("message", "")
         )
-        self.logger.info(f"Synthesis prompt:\n{synth_prompt}")
         confirmation = self.llm.invoke(synth_prompt).content
         self.logger.info(f"Final confirmation: {confirmation}")
 
