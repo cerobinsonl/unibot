@@ -5,11 +5,11 @@ import random
 from datetime import datetime, timedelta
 import pandas as pd
 
-# Import database tools
+# Import database tools (we'll override its engine)
 from tools.database import DatabaseConnection
 
 # Import configuration
-from config import settings, AGENT_CONFIGS, get_llm
+from config import settings, AGENT_CONFIGS, get_llm, get_engine
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -22,14 +22,22 @@ class SyntheticAgent:
     
     def __init__(self):
         """Initialize the Synthetic Data Generator"""
-        # Create the LLM using the helper function
+        # Create the LLM
         self.llm = get_llm("synthetic_agent")
         
-        # Initialize database connection for schema retrieval
+        # Build our unified engine (local or Cloud SQL)
+        engine = get_engine()
+        
+        # Instantiate and patch DatabaseConnection
         try:
+            self.db = DatabaseConnection(engine)
+        except TypeError:
             self.db = DatabaseConnection(settings.DATABASE_URL)
+            self.db.engine = engine
+        
+        # Now fetch schema if we have a working connection
+        try:
             self.db_initialized = True
-            # Dynamically fetch the database schema on initialization
             self.schema_info = self._get_database_schema()
             schema_size = len(self.schema_info)
             table_count = self.schema_info.count('CREATE TABLE')
@@ -38,6 +46,7 @@ class SyntheticAgent:
             logger.error(f"Error initializing database connection: {e}", exc_info=True)
             self.db_initialized = False
             self.schema_info = "Error: Could not retrieve database schema"
+        
         
         # Create the schema analysis prompt
         self.schema_prompt = """

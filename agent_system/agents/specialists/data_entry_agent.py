@@ -4,11 +4,11 @@ import json
 import re
 import os
 
-# Import database tools
+# Import database tools (we'll override its engine)
 from tools.database import DatabaseConnection
 
 # Import configuration
-from config import settings, AGENT_CONFIGS, get_llm
+from config import settings, AGENT_CONFIGS, get_llm, get_engine
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -21,15 +21,24 @@ class DataEntryAgent:
     
     def __init__(self):
         """Initialize the Data Entry Agent"""
-        # Create the LLM using the helper function
+        # Create the LLM
         self.llm = get_llm("data_entry_agent")
         
-        # Initialize database connection
-        self.db = DatabaseConnection(settings.DATABASE_URL)
+        # Build our unified engine (local or Cloud SQL)
+        engine = get_engine()
+        
+        # Instantiate your existing DatabaseConnection, then patch in the new engine
+        try:
+            # if DatabaseConnection accepts an engine directly
+            self.db = DatabaseConnection(engine)
+        except TypeError:
+            # otherwise, fall back to old ctor and override
+            self.db = DatabaseConnection(settings.DATABASE_URL)
+            self.db.engine = engine
         
         # Dynamically fetch the database schema on initialization
         self.schema_info = self._get_database_schema()
-        
+
         # Create SQL generation prompt for data operations
         self.sql_prompt = """
 You are the Data Entry Agent for a university administrative system.
