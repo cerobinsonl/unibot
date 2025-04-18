@@ -18,14 +18,9 @@ class CommunicationCoordinator:
 You are the Communication Coordinator for a university administrative system.
 Your role is to handle all messaging and notification related tasks.
 
-You need to create a plan for handling this communication request. Analyze what type of communication is needed:
+You need to create a plan for handling this communication request.
 
-1. Email - Formal communication to students, faculty, or staff
-2. Notification - System notifications to be shown in the university portal
-3. SMS - Urgent messages that need immediate attention
-
-Format your response as a JSON object with these keys:
-- communication_type: "email", "notification", or "sms"
+Format your response as a JSON object with these keys (and **always** make `recipient_query` ask for **email addresses**):
 - recipient_query: A natural language description of who should receive this communication
 - subject: Subject line for the communication
 - content: The content of the message (use HTML tags for line breaks and lists)
