@@ -1,35 +1,20 @@
-from typing import Dict, List, Any, Optional
-import json
 import logging
+import json
 from datetime import datetime
+from typing import Dict, Any, List
 
-# Import configuration
 from config import settings, AGENT_CONFIGS, get_llm
-
-# Import specialists
 from agents.specialists.email_agent import EmailAgent
 from agents.specialists.sql_agent import SQLAgent
-
-# Configure logging
-logger = logging.getLogger(__name__)
 
 class CommunicationCoordinator:
     """
     Communication Coordinator manages all messaging and notification tasks
-    by delegating to specialized messaging agents.
+    by delegating to specialized messaging agents, with schema‑aware planning
+    and automatic retry on SQL errors using only LLM capabilities.
     """
-    
-    def __init__(self):
-        """Initialize the Communication Coordinator"""
-        # Create the LLM using the helper function
-        self.llm = get_llm("communication_coordinator")
-        
-        # Initialize specialist agents
-        self.email_agent = EmailAgent()
-        self.sql_agent = SQLAgent()  # SQL agent for database queries
-        
-        # Create the task planning prompt
-        self.planning_prompt = """
+    # Prompt to plan the communication, schema will be injected dynamically
+    PLANNING_PROMPT = """
 You are the Communication Coordinator for a university administrative system.
 Your role is to handle all messaging and notification related tasks.
 
@@ -43,399 +28,199 @@ Format your response as a JSON object with these keys:
 - communication_type: "email", "notification", or "sms"
 - recipient_query: A natural language description of who should receive this communication
 - subject: Subject line for the communication
-- content: The content of the message
+- content: The content of the message (use HTML tags for line breaks and lists)
 - priority: "high", "medium", or "low"
 
-Example:
-{{
-  "communication_type": "email",
-  "recipient_query": "Get email addresses of all students who have applied for financial aid but haven't completed their application",
-  "subject": "Important Update About Final Exams",
-  "content": "Dear Students, This is to inform you that the final exam schedule has been updated...",
-  "priority": "high"
-}}
-
-Important: Make sure the content is appropriate for a university setting and formatted correctly for the chosen communication type.
-
 User request: {user_input}
 """
-        
-        # Create the results synthesis prompt
-        self.synthesis_prompt = """
+
+    # Prompt to ask the LLM to correct a failing recipient_query based on schema and error
+    CORRECTION_PROMPT = """
 You are the Communication Coordinator for a university administrative system.
-Your role is to handle all messaging and notification related tasks.
+Your last recipient_query caused this SQL error:
+{error}
 
-You are synthesizing the results from communication operations to create a response for the user.
+The original recipient_query was:
+"{original_query}"
 
-Review the communication request and the results of the sending operation, then create a clear response 
-that confirms what was done and provides any relevant details.
+Here is the database schema:
+{schema_info}
 
-Your response should:
-1. Confirm what type of communication was sent
-2. Indicate who it was sent to (in general terms and include the recipient count)
-3. Mention if it was successfully delivered
-4. Avoid using placeholder text like "[Financial Aid Office]" - use "Financial Aid Office" without brackets
-5. Be professional and concise, as appropriate for university administrative staff
-
-User request: {user_input}
-
-Communication details: 
-Type: {comm_type}
-Recipients: {recipient_count} recipients ({recipient_description})
-Subject: {subject}
-
-Sending result: {result}
-
-Create a response summarizing the action taken.
+Please generate a corrected recipient_query (just the value for "recipient_query") that will work
+with the schema above. Respond with only the corrected recipient_query string.
 """
-    
+
+    # Prompt to synthesize the final confirmation message
+    SYNTHESIS_PROMPT = """
+You are the Communication Coordinator for a university administrative system.
+Your role is to confirm to the user what was done.
+
+User request:
+{user_input}
+
+Communication details:
+- Type: {comm_type}
+- Recipients: {recipient_count} ({recipient_list})
+- Subject: {subject}
+- Email agent result: {result}
+
+Please write a concise confirmation message summarizing the action taken.
+"""
+
+    def __init__(self):
+        self.llm = get_llm("communication_coordinator")
+        self.sql_agent = SQLAgent()
+        self.email_agent = EmailAgent()
+        self.logger = logging.getLogger(__name__)
+
     def __call__(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Process the communication request by coordinating specialist agents
-        
-        Args:
-            state: Current state of the conversation
-            
-        Returns:
-            Updated state with communication results
-        """
+        user_input = state.get("user_input", "")
+        steps: List[Dict[str, Any]] = state.setdefault("intermediate_steps", [])
+
+        self.logger.info(f"Coordinator start: {user_input}")
+
+        # 1. Plan the communication, injecting schema
+        schema_info = self.sql_agent.schema_info
+        self.logger.info("Injecting schema into planning prompt")
+        plan_prompt = (
+            self.PLANNING_PROMPT
+            + "\n\nDatabase schema:\n"
+            + schema_info
+        ).format(user_input=user_input)
+        self.logger.info(f"Plan prompt:\n{plan_prompt}")
+        plan_response = self.llm.invoke(plan_prompt).content
+        self.logger.info(f"Plan response:\n{plan_response}")
+
         try:
-            # Extract information from state
-            user_input = state.get("user_input", "")
-            intermediate_steps = state.get("intermediate_steps", [])
-            
-            # Step 1: Create a plan for handling the request
-            formatted_prompt = self.planning_prompt.format(user_input=user_input)
-            planning_response = self.llm.invoke(formatted_prompt).content
-            
-            # Parse the planning response
-            try:
-                plan = json.loads(planning_response)
-                plan["content"] = plan["content"].replace('\\n', '<br>').replace('\r\n', '<br>').replace('\n', '<br>')
-            except json.JSONDecodeError:
-                # If the response isn't valid JSON, extract what we can
-                import re
-                
-                comm_type_match = re.search(r'"communication_type"\s*:\s*"([^"]+)"', planning_response)
-                comm_type = comm_type_match.group(1) if comm_type_match else "email"
-                
-                subject_match = re.search(r'"subject"\s*:\s*"([^"]+)"', planning_response)
-                subject = subject_match.group(1) if subject_match else "University Communication"
-                
-                content_match = re.search(r'"content"\s*:\s*"([^"]+)"', planning_response)
-                content = content_match.group(1).replace('\\n', '<br>') if content_match else user_input
-
-                recipient_query_match = re.search(r'"recipient_query"\s*:\s*"([^"]+)"', planning_response)
-                recipient_query = recipient_query_match.group(1) if recipient_query_match else "Get email addresses of all students"
-                
-                priority_match = re.search(r'"priority"\s*:\s*"([^"]+)"', planning_response)
-                priority = priority_match.group(1) if priority_match else "medium"
-                
-                plan = {
-                    "communication_type": comm_type,
-                    "recipient_query": recipient_query,
-                    "subject": subject,
-                    "content": content,
-                    "priority": priority
-                }
-
-                logger.info(f"ABER email {plan} results")
-
-            # Add planning step to intermediate steps
-            intermediate_steps.append({
-                "agent": "communication",
-                "action": "create_plan",
-                "input": user_input,
-                "output": plan,
-                "timestamp": self._get_timestamp()
-            })
-            
-            # Step 2: Find recipients based on recipient_query
-            recipient_description = plan.get("recipient_query", "")
-            recipients = self._find_recipients(recipient_description, intermediate_steps)
-            
-            # Step 3: Handle the communication based on type
-            result = None
-            if plan["communication_type"] == "email":
-                # Use the email agent
-                result = self.email_agent({
-                    "recipients": recipients,
-                    "subject": plan["subject"],
-                    "content": plan["content"],
-                    "priority": plan["priority"]
-                })
-                
-                # Add email step to intermediate steps
-                intermediate_steps.append({
-                    "agent": "email_agent",
-                    "action": "send_email",
-                    "input": {
-                        "recipients_count": len(recipients),
-                        "subject": plan["subject"],
-                        "content": "Email content"  # Don't log full content for privacy
-                    },
-                    "output": result,
-                    "timestamp": self._get_timestamp()
-                })
-                
-            elif plan["communication_type"] == "notification":
-                # Mock notification for now (would use a NotificationAgent in production)
-                result = {
-                    "status": "success",
-                    "message": f"Notification queued for {len(recipients)} recipients",
-                    "notification_id": f"notif-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                }
-                
-                # Add notification step to intermediate steps
-                intermediate_steps.append({
-                    "agent": "notification_agent",
-                    "action": "send_notification",
-                    "input": {
-                        "recipients_count": len(recipients),
-                        "content": "Notification content"  # Don't log full content for privacy
-                    },
-                    "output": result,
-                    "timestamp": self._get_timestamp()
-                })
-                
-            elif plan["communication_type"] == "sms":
-                # Mock SMS for now (would use an SMSAgent in production)
-                result = {
-                    "status": "success",
-                    "message": f"SMS queued for {len(recipients)} recipients",
-                    "sms_id": f"sms-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                }
-                
-                # Add SMS step to intermediate steps
-                intermediate_steps.append({
-                    "agent": "sms_agent",
-                    "action": "send_sms",
-                    "input": {
-                        "recipients_count": len(recipients),
-                        "content": "SMS content"  # Don't log full content for privacy
-                    },
-                    "output": result,
-                    "timestamp": self._get_timestamp()
-                })
-            
-            # Step 4: Synthesize results
-            synthesis_input = {
-                "user_input": user_input,
-                "comm_type": plan["communication_type"],
-                "recipient_count": len(recipients),
-                "recipient_description": recipient_description,
-                "subject": plan.get("subject", ""),
-                "result": result.get("message", "Message sent successfully.")
-            }
-            
-            formatted_prompt = self.synthesis_prompt.format(**synthesis_input)
-            response = self.llm.invoke(formatted_prompt).content
-            
-            # Update state
-            state["response"] = response
-            state["intermediate_steps"] = intermediate_steps
+            plan = json.loads(plan_response)
+        except json.JSONDecodeError:
+            self.logger.error("Failed to parse plan JSON, aborting")
+            state["response"] = "Sorry, I couldn't understand how to plan your request."
             state["current_agent"] = "communication"
-            
             return state
-            
-        except Exception as e:
-            logger.error(f"Error in Communication Coordinator: {e}", exc_info=True)
-            error_response = f"I encountered an error while processing your communication request: {str(e)}. Please try rephrasing your request or contact support if the issue persists."
-            
-            # Update state with error
-            state["response"] = error_response
-            state["current_agent"] = "communication"
-            
-            return state
-    
-    def _find_recipients(self, recipient_description: str, intermediate_steps: List[Dict[str, Any]]) -> List[str]:
-        """
-        Find recipients based on natural language description
-        
-        This method sends natural language queries to the SQL agent to find recipients.
-        It first tries targeted queries based on the recipient description, with fallbacks
-        as needed.
-        
-        Args:
-            recipient_description: Natural language description of recipients
-            intermediate_steps: List to record intermediate steps
-            
-        Returns:
-            List of recipient email addresses
-        """
-        recipients = []
-        logger.info(f"Starting to find recipients for: {recipient_description}")
-        
-        # Step 1: Prepare queries based on description type
-        queries = []
-        
-        # Check what type of recipients we're looking for
-        is_probation = "probation" in recipient_description.lower() or "academic standing" in recipient_description.lower()
-        is_financial_aid = "financial aid" in recipient_description.lower() or "scholarship" in recipient_description.lower()
-        is_department = "department" in recipient_description.lower() or "program" in recipient_description.lower()
-        is_gpa = "gpa" in recipient_description.lower() or "grade" in recipient_description.lower()
-        
-        # Step 2: Formulate appropriate queries for the recipient type
-        
-        if is_probation:
-            # For academic probation, first explore academic standing values
-            queries.append("Find all distinct values in the AcademicStanding column of the PsStudentAcademicRecord table")
-            
-            # Use a more flexible query that handles different possible academic standing values
-            queries.append("Find email addresses of all students whose AcademicStanding contains 'Probation' or is exactly 'Probation'")
-            
-        elif is_financial_aid:
-            # For financial aid, explore financial aid status values
-            queries.append("Find all distinct financial aid status values available in the database")
-            
-            # Then find students with specific statuses
-            queries.append("Find email addresses of all students who have received financial aid")
-            
-        elif is_department:
-            # For department queries, find departments and then students in them
-            queries.append("Find all available departments or programs in the database")
-            
-            # Extract department from description if available
-            department_query = f"Find email addresses of all students in the {recipient_description}"
-            queries.append(department_query)
-            
-        elif is_gpa:
-            # For GPA-related queries
-            queries.append("Find email addresses of all students with GPA below 2.5")
-            queries.append("Find email addresses of all students with GPA above 3.5")
-            
-        else:
-            # Generic student query
-            queries.append("Find email addresses of all current students")
-        
-        # Step 3: Execute queries in sequence until we find recipients
-        for query in queries:
-            # Skip empty queries
-            if not query:
-                continue
-                
-            logger.info(f"Executing query: {query}")
-            
-            # Add the query to intermediate steps
-            intermediate_steps.append({
-                "agent": "sql_agent",
-                "action": "query_recipients",
-                "input": query,
-                "output": "Processing query to find recipients",
-                "timestamp": self._get_timestamp()
-            })
-            
-            # Execute the query using the SQL agent
-            sql_result = self.sql_agent(query)
-            
-            # Debug logging for sql result
-            if "is_error" in sql_result:
-                logger.info(f"Query error status: {sql_result['is_error']}")
-            
-            ABEEER = sql_result
 
-            if "results" in sql_result:
-                logger.info(f"ABER Query returned {len(sql_result['results'])} results")
-                logger.info(f"ABER Query returned {ABEEER} results")
-            
-            # Parse the result to find emails
-            if "results" in sql_result and sql_result["results"]:
-                results = sql_result.get("results", [])
-                logger.info(f"Processing {len(results)} rows from query result")
-                # Extract potential email addresses from results
-                emails_found = 0
-                for row in results:
-                    for key, value in row.items():
-                        if isinstance(value, str) and "@" in value:
-                            recipients.append(value)
-                            emails_found += 1
-                
-                logger.info(f"Extracted {emails_found} email addresses from query results")
-                
-                # If we found emails, we can stop querying
-                if recipients:
-                    logger.info(f"Found {len(recipients)} recipients with query: {query}")
-                    
-                    # Record success in intermediate steps
-                    intermediate_steps.append({
-                        "agent": "sql_agent",
-                        "action": "find_recipients",
-                        "input": query,
-                        "output": f"Found {len(recipients)} recipients",
-                        "timestamp": self._get_timestamp()
-                    })
-                    
-                    return recipients
-                else:
-                    logger.warning(f"Query returned results but no email addresses were found")
-            else:
-                # Log specific error message if available
-                if "error" in sql_result:
-                    logger.warning(f"Query error: {sql_result['error']}")
-        
-        # # Step 4: Try one direct GPA query as a last resort
-        # if not recipients:
-        #     last_resort_query = """
-        #     SELECT "Person"."EmailAddress"
-        #     FROM "Person"
-        #     JOIN "PsStudentAcademicRecord" ON "Person"."PersonId" = "PsStudentAcademicRecord"."PersonId"
-        #     WHERE "PsStudentAcademicRecord"."GPA" < 2.5;
-        #     """
-            
-        #     logger.info("Trying last resort direct GPA query")
-            
-        #     try:
-        #         # Execute the query directly using SQL agent's raw_query method if available
-        #         if hasattr(self.sql_agent, 'execute_raw_query'):
-        #             direct_result = self.sql_agent.execute_raw_query(last_resort_query)
-        #         else:
-        #             # Fall back to regular query method with the raw SQL
-        #             direct_result = self.sql_agent(f"Execute this exact SQL query: {last_resort_query}")
-                
-        #         # Log the result
-        #         logger.info(f"Last resort query result: {direct_result}")
-                
-        #         # Process the results directly
-        #         if "results" in direct_result and direct_result["results"]:
-        #             for row in direct_result["results"]:
-        #                 for value in row.values():
-        #                     if isinstance(value, str) and "@" in value:
-        #                         recipients.append(value)
-                    
-        #             logger.info(f"Last resort query found {len(recipients)} email addresses")
-                    
-        #             if recipients:
-        #                 return recipients
-        #     except Exception as e:
-        #         logger.error(f"Error executing last resort query: {e}")
-        
-        # Step 5: If all queries failed to find recipients, use fallback
-        logger.warning("No recipients found with database queries, using fallbacks")
-        
-        fallback_recipients = []
-        
-        if is_probation:
-            fallback_recipients = ["academic_support@university.edu"]
-        elif is_financial_aid:
-            fallback_recipients = ["financial_aid_students@university.edu"]
-        elif is_department:
-            fallback_recipients = ["departmental_students@university.edu"]
-        else:
-            fallback_recipients = ["all_students@university.edu"]
-        
-        logger.info(f"Using fallback recipients: {fallback_recipients}")
-        
-        # Record fallback in intermediate steps
-        intermediate_steps.append({
+        steps.append({
             "agent": "communication",
-            "action": "use_fallback_recipients",
-            "input": recipient_description,
-            "output": f"Using fallback recipients: {fallback_recipients}",
-            "timestamp": self._get_timestamp()
+            "action": "create_plan",
+            "input": user_input,
+            "output": plan,
+            "timestamp": datetime.now().isoformat()
         })
-        
-        return fallback_recipients
-    
-    def _get_timestamp(self) -> str:
-        """Get current timestamp as string"""
+
+        recipient_query = plan["recipient_query"]
+
+        # 2. Try the SQL query, with up to one auto‑correction pass
+        sql_result = None
+        for attempt in range(2):
+            self.logger.info(f"SQLAgent attempt {attempt+1} for query: {recipient_query}")
+            sql_result = self.sql_agent(recipient_query)
+            self.logger.info(f"SQLAgent result: {sql_result}")
+
+            if not sql_result.get("is_error", False):
+                break
+
+            # Auto‑correct via LLM
+            error_msg = sql_result.get("error", "Unknown error")
+            correction_prompt = self.CORRECTION_PROMPT.format(
+                error=error_msg,
+                original_query=recipient_query,
+                schema_info=schema_info
+            )
+            self.logger.info(f"Correction prompt:\n{correction_prompt}")
+            corrected = self.llm.invoke(correction_prompt).content.strip()
+            self.logger.info(f"Corrected recipient_query: {corrected}")
+
+            steps.append({
+                "agent": "communication",
+                "action": "auto_correct",
+                "input": {"original_query": recipient_query, "error": error_msg},
+                "output": corrected,
+                "timestamp": datetime.now().isoformat()
+            })
+            recipient_query = corrected
+
+        # 3. Extract email addresses or apply fallback
+        recipients: List[str] = []
+        if sql_result and not sql_result.get("is_error") and sql_result.get("results"):
+            for row in sql_result["results"]:
+                for v in row.values():
+                    if isinstance(v, str) and "@" in v:
+                        recipients.append(v)
+            self.logger.info(f"Extracted recipients: {recipients}")
+        else:
+            self.logger.warning("No valid recipients found, using fallback address")
+            recipients = ["all_students@university.edu"]
+
+        steps.append({
+            "agent": "communication",
+            "action": "extract_recipients",
+            "input": sql_result.get("results") if sql_result else None,
+            "output": f"Recipients: {recipients}",
+            "timestamp": datetime.now().isoformat()
+        })
+
+        # 4. Send the email (only for email type)
+        email_result: Dict[str, Any] = {}
+        if plan["communication_type"] == "email":
+            self.logger.info(f"Sending email to {len(recipients)} recipients")
+            email_input = {
+                "recipients": recipients,
+                "subject": plan["subject"],
+                "content": plan["content"],
+                "priority": plan["priority"]
+            }
+            self.logger.info(f"EmailAgent input: {email_input}")
+            email_result = self.email_agent(email_input)
+            self.logger.info(f"EmailAgent result: {email_result}")
+            steps.append({
+                "agent": "email_agent",
+                "action": "send_email",
+                "input": {"recipients_count": len(recipients), "subject": plan["subject"]},
+                "output": email_result,
+                "timestamp": datetime.now().isoformat()
+            })
+        else:
+            # (Implement notification/SMS similarly if needed)
+            self.logger.info(f"No email sent, communication_type={plan['communication_type']}")
+            email_result = {"message": "No email sent for this communication type."}
+
+        # 5. Synthesize final confirmation
+        synth_prompt = self.SYNTHESIS_PROMPT.format(
+            user_input=user_input,
+            comm_type=plan["communication_type"],
+            recipient_count=len(recipients),
+            recipient_list=", ".join(recipients),
+            subject=plan["subject"],
+            result=email_result.get("message", "")
+        )
+        self.logger.info(f"Synthesis prompt:\n{synth_prompt}")
+        confirmation = self.llm.invoke(synth_prompt).content
+        self.logger.info(f"Final confirmation: {confirmation}")
+
+        state["response"] = confirmation
+        state["intermediate_steps"] = steps
+        state["current_agent"] = "communication"
+        return state
+
+
+    def _correct_query(self, original_query: str, error: str) -> str:
+        """
+        Ask the LLM to rewrite the recipient_query to match the schema, given an error.
+        """
+        schema_info = self.sql_agent.schema_info
+        correction_prompt = (
+            AGENT_CONFIGS['communication_coordinator']['system_prompt']
+            + "\nDatabase schema:\n" + schema_info
+            + f"\nOriginal query: {original_query}"
+            + f"\nError: {error}"
+            + "\nPlease provide a corrected recipient_query in JSON, e.g.: {\"recipient_query\": \"…\"}."
+        )
+        correction_response = self.llm.invoke(correction_prompt).content
+        try:
+            corrected = json.loads(correction_response).get('recipient_query', original_query)
+        except json.JSONDecodeError:
+            corrected = original_query
+        return corrected
+
+    def _ts(self) -> str:
         return datetime.now().isoformat()

@@ -5,9 +5,6 @@ import random
 from datetime import datetime, timedelta
 import pandas as pd
 
-# Import database tools (we'll override its engine)
-from tools.database import DatabaseConnection
-
 # Import configuration
 from config import settings, AGENT_CONFIGS, get_llm, get_engine
 
@@ -24,28 +21,33 @@ class SyntheticAgent:
         """Initialize the Synthetic Data Generator"""
         # Create the LLM
         self.llm = get_llm("synthetic_agent")
-        
-        # Build our unified engine (local or Cloud SQL)
-        engine = get_engine()
-        
-        # Instantiate and patch DatabaseConnection
+        self.engine = None  # Initialize engine to None
+        self.db_initialized = False # Initialize db_initialized to False
+        self.schema_info = "Database connection not yet initialized" # Default schema info
+
+        # Try to set up the database connection
         try:
-            self.db = DatabaseConnection(engine)
-        except TypeError:
-            self.db = DatabaseConnection(settings.DATABASE_URL)
-            self.db.engine = engine
-        
-        # Now fetch schema if we have a working connection
-        try:
+            import sqlalchemy
+            from sqlalchemy import create_engine, text
+            from decimal import Decimal
+            from config import get_engine
+            
+            self.engine = get_engine()
             self.db_initialized = True
-            self.schema_info = self._get_database_schema()
+            logger.info("SQL Agent DB connection initialized successfully")
+
+            # Dynamically fetch the database schema on initialization
+            self.schema_info = self._get_enhanced_schema_info()
             schema_size = len(self.schema_info)
-            table_count = self.schema_info.count('CREATE TABLE')
+            table_count = self.schema_info.count('Table:')
             logger.info(f"Retrieved database schema with {table_count} tables, schema size: {schema_size} chars")
+            
         except Exception as e:
-            logger.error(f"Error initializing database connection: {e}", exc_info=True)
+            logger.error(f"Error initializing SQL database connection: {e}", exc_info=True)
             self.db_initialized = False
-            self.schema_info = "Error: Could not retrieve database schema"
+            self.schema_info = f"Error: Could not retrieve database schema - {e}"
+        
+        logger.info(f"SQL Agent initialization complete. DB Initialized: {self.db_initialized}")
         
         
         # Create the schema analysis prompt

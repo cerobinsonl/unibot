@@ -4,9 +4,6 @@ import json
 import re
 import os
 
-# Import database tools (we'll override its engine)
-from tools.database import DatabaseConnection
-
 # Import configuration
 from config import settings, AGENT_CONFIGS, get_llm, get_engine
 
@@ -22,22 +19,33 @@ class DataEntryAgent:
     def __init__(self):
         """Initialize the Data Entry Agent"""
         # Create the LLM
-        self.llm = get_llm("data_entry_agent")
+        self.engine = None  # Initialize engine to None
+        self.db_initialized = False # Initialize db_initialized to False
+        self.schema_info = "Database connection not yet initialized" # Default schema info
         
-        # Build our unified engine (local or Cloud SQL)
-        engine = get_engine()
-        
-        # Instantiate your existing DatabaseConnection, then patch in the new engine
+        # Try to set up the database connection
         try:
-            # if DatabaseConnection accepts an engine directly
-            self.db = DatabaseConnection(engine)
-        except TypeError:
-            # otherwise, fall back to old ctor and override
-            self.db = DatabaseConnection(settings.DATABASE_URL)
-            self.db.engine = engine
+            import sqlalchemy
+            from sqlalchemy import create_engine, text
+            from decimal import Decimal
+            from config import get_engine
+            
+            self.engine = get_engine()
+            self.db_initialized = True
+            logger.info("SQL Agent DB connection initialized successfully")
+
+            # Dynamically fetch the database schema on initialization
+            self.schema_info = self._get_enhanced_schema_info()
+            schema_size = len(self.schema_info)
+            table_count = self.schema_info.count('Table:')
+            logger.info(f"Retrieved database schema with {table_count} tables, schema size: {schema_size} chars")
+            
+        except Exception as e:
+            logger.error(f"Error initializing SQL database connection: {e}", exc_info=True)
+            self.db_initialized = False
+            self.schema_info = f"Error: Could not retrieve database schema - {e}"
         
-        # Dynamically fetch the database schema on initialization
-        self.schema_info = self._get_database_schema()
+        logger.info(f"SQL Agent initialization complete. DB Initialized: {self.db_initialized}")
 
         # Create SQL generation prompt for data operations
         self.sql_prompt = """
