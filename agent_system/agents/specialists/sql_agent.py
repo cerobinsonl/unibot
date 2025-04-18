@@ -39,7 +39,6 @@ class SQLAgent:
             self.schema_info = self._get_enhanced_schema_info()
             schema_size = len(self.schema_info)
             table_count = self.schema_info.count('Table:')
-            logger.info(f"Retrieved database schema with {table_count} tables, schema size: {schema_size} chars")
             
         except Exception as e:
             logger.error(f"Error initializing SQL database connection: {e}", exc_info=True)
@@ -50,34 +49,29 @@ class SQLAgent:
 
         # Create the code generation prompt
         self.code_prompt = """
-You need to generate a SQL query based on a natural language request for a university database.
+        You need to generate a valid PostgreSQL statement (SELECT, INSERT, UPDATE, or DELETE)
+        based on a natural-language request for our university database.
 
-CURRENT DATABASE SCHEMA INFORMATION:
-{schema_info}
+        CURRENT DATABASE SCHEMA INFORMATION:
+        {schema_info}
+        USER'S REQUEST:
+        {task}
 
-USER'S REQUEST:
-{task}
-
-IMPORTANT GUIDELINES:
-1. This is the ACTUAL schema from the database - use ONLY these tables and columns.
-2. DO NOT include comments in your SQL query, just the pure SQL.
-3. Always use double quotes around table and column names: "TableName"."ColumnName".
-4. Only query tables that exist in the schema provided.
-5. If you cannot answer a query with the available schema, explain what's missing.
-6. Never invent or assume tables or columns that aren't in the schema.
-7. The database is PostgreSQL.
-8. Pay close attention to the actual table and column names in the schema.
-9. NEVER use fallback queries - if you can't find the right tables, indicate that clearly.
-10. When filtering data, ONLY use values that make sense for the column based on its data type and the statistics provided.
-11. If a query needs to filter by a certain column value, check if sample values are provided in the schema, and use only those exact values.
-12. For date/time filters, ensure the format matches what's expected by PostgreSQL.
-13. For numeric filters, ensure values are within appropriate ranges based on column statistics.
-
-Based on the schema provided, generate a single SELECT SQL query that will answer this request.
-Make sure to use only tables and columns that actually exist in the schema above.
-
-Reply with ONLY the SQL query, nothing else.
-"""
+        IMPORTANT GUIDELINES:
+        1. Use ONLY the tables and columns in the schema above.
+        2. Always quote identifiers with double quotes: "TableName"."ColumnName".
+        3. For INSERT/UPDATE/DELETE, ensure the correct syntax and handle NULLs appropriately.
+        4. Do not include extraneous comments—output only the pure SQL statement.
+        5. If the operation cannot be performed, return an error explanation instead of SQL.
+        6. Pay close attention to the actual table and column names in the schema.
+        7. When filtering data, ONLY use values that make sense for the column based on its data type and the statistics provided.
+        8. The database is PostgreSQL.
+        9. For date/time filters, ensure the format matches what's expected by PostgreSQL.
+        10. For numeric filters, ensure values are within appropriate ranges based on column statistics.
+        
+        Reply with a JSON object **only**:
+        {{ "sql": "<your SQL here>", "type": "<select|insert|update|delete>" }}
+        """
     
     def _get_enhanced_schema_info(self) -> str:
         """
