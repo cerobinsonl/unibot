@@ -20,6 +20,9 @@ class SQLAgent:
         """Initialize the SQL Agent with dynamic schema retrieval"""
         # Create the LLM using the helper function
         self.llm = get_llm("sql_agent")
+        self.engine = None  # Initialize engine to None
+        self.db_initialized = False # Initialize db_initialized to False
+        self.schema_info = "Database connection not yet initialized" # Default schema info
         
         # Try to set up the database connection
         try:
@@ -28,11 +31,16 @@ class SQLAgent:
             from decimal import Decimal
             
             # Connect to the database using environment variables or settings
+            import sqlalchemy
+            from sqlalchemy import create_engine, text
+            from decimal import Decimal
+
+            # Connect to the database using environment variables or settings
             conn_string = settings.DATABASE_URL
             self.engine = create_engine(conn_string)
-            logger.info("SQL Agent DB connection initialized successfully")
             self.db_initialized = True
-            
+            logger.info("SQL Agent DB connection initialized successfully")
+
             # Dynamically fetch the database schema on initialization
             self.schema_info = self._get_enhanced_schema_info()
             schema_size = len(self.schema_info)
@@ -42,8 +50,10 @@ class SQLAgent:
         except Exception as e:
             logger.error(f"Error initializing SQL database connection: {e}", exc_info=True)
             self.db_initialized = False
-            self.schema_info = "Error: Could not retrieve database schema"
+            self.schema_info = f"Error: Could not retrieve database schema - {e}"
         
+        logger.info(f"SQL Agent initialization complete. DB Initialized: {self.db_initialized}")
+
         # Create the code generation prompt
         self.code_prompt = """
 You need to generate a SQL query based on a natural language request for a university database.
