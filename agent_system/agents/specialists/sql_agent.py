@@ -216,13 +216,8 @@ class SQLAgent:
                     schema_info=self.schema_info,
                     task=task
                 )
-                query_response = self.llm.invoke(formatted_prompt).content.strip()
-                try:
-                    payload = json.loads(query_response)
-                    sql = payload.get("sql", "").strip()
-                except json.JSONDecodeError:
-                    # model didn’t follow JSON format—fallback to raw
-                    sql = query_response
+                query_response = self.llm.invoke(formatted_prompt)
+                sql = query_response.content.strip()
             else:
                 # Raw‐SQL path (DDL/DML) – run it directly
                 sql = task.strip()
@@ -237,7 +232,7 @@ class SQLAgent:
             # and for raw‐SQL path we'll allow CREATE/INSERT/UPDATE/DELETE/DROP
             normalized = sql.strip().upper()
             first_word = normalized.split()[0]
-            if first_word not in ("SELECT","INSERT","UPDATE","DELETE","CREATE","ALTER","DROP"):
+            if first_word not in ("SELECT", "WITH", "CREATE", "INSERT", "UPDATE", "DELETE", "DROP"):
                 raise ValueError(
                     f"Unsafe or unsupported SQL statement: {first_word}"
                 )
