@@ -209,38 +209,29 @@ class SQLAgent:
             # Log the incoming task
             logger.info(f"Processing SQL task: {task}")
 
-            upper = task.strip().upper()
-            if upper.startswith(("SELECT", "WITH", "CREATE", "INSERT", "UPDATE", "DELETE", "DROP")):
-                # Raw‐SQL path
-                sql = task.strip()
-                logger.info(f"Aber SQL: {sql}")
-            else:
-                # NL path → ask the LLM to generate JSON {"sql": "...", "type": ...}
+            # Decide whether this is raw SQL or NL prompt
+            if task.strip().upper().startswith(("SELECT", "WITH")):
+                # Natural‐language path: go through the LLM to generate a SELECT
                 formatted_prompt = self.code_prompt.format(
                     schema_info=self.schema_info,
                     task=task
                 )
-                raw = self.llm.invoke(formatted_prompt).content.strip()
-                # If it's JSON, pull out the "sql" field; else assume raw is SQL
+                query_response = self.llm.invoke(formatted_prompt).content.strip()
                 try:
-                    
-                    payload = json.loads(raw)
-                    logger.info(f"Aber payload: {payload}")
+                    payload = json.loads(query_response)
                     sql = payload.get("sql", "").strip()
-                    logger.info(f"Aber payload SQL: {payload}")
-
                 except json.JSONDecodeError:
-                    sql = raw
+                    # model didn’t follow JSON format—fallback to raw
+                    sql = query_response
+            else:
+                # Raw‐SQL path (DDL/DML) – run it directly
+                sql = task.strip()
 
             # Clean up triple‐backticks and comments
             sql = re.sub(r'^```(?:sql)?\s*', '', sql)
             sql = re.sub(r'\s*```$', '', sql)
             sql = re.sub(r'--.*?\n', '\n', sql)
             sql = re.sub(r'/\*.*?\*/', '', sql, flags=re.DOTALL)
-
-            sql = sql.strip()
-            if sql.startswith('"') and sql.endswith('"'):
-                sql = sql[1:-1].strip()
 
             # Safety check: only allow SELECT/WITH through LLM path,
             # and for raw‐SQL path we'll allow CREATE/INSERT/UPDATE/DELETE/DROP
