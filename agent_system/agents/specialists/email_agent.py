@@ -26,10 +26,17 @@ class EmailAgent:
         # Create the LLM using the helper function
         self.llm = get_llm("email_agent")
         
-        # MailHog configuration
+        # MailHog (local) configuration
         self.mailhog_server = os.getenv("SMTP_SERVER", "mailhog")
-        self.mailhog_port = int(os.getenv("SMTP_PORT", "1025"))
-        
+        self.mailhog_port   = int(os.getenv("SMTP_PORT", "1025"))
+
+        # Mailtrap (online) configuration
+        self.use_mailtrap  = os.getenv("USE_MAILTRAP", "false").lower() == "true"
+        self.mailtrap_user = os.getenv("MAILTRAP_USERNAME", "")
+        self.mailtrap_pass = os.getenv("MAILTRAP_PASSWORD", "")
+        self.mailtrap_host = os.getenv("MAILTRAP_HOST", "sandbox.smtp.mailtrap.io")
+        self.mailtrap_port = int(os.getenv("MAILTRAP_PORT", "2525"))
+
         # Email configuration
         self.from_email = os.getenv("FROM_EMAIL", "university-admin@example.edu")
         
@@ -112,20 +119,15 @@ Please format the **provided content** into a professional university **HTML** e
             # Determine if we should use mock sending or MailHog
             use_mailhog = os.getenv("USE_MAILHOG", "true").lower() == "true"
             
-            if use_mailhog:
-                # Send to MailHog testing service
-                message_id, send_status = self._send_with_mailhog(
-                    recipients, 
-                    formatted_subject, 
-                    formatted_content, 
-                    priority
+            if self.use_mailtrap:
+                message_id, send_status = self._send_with_mailtrap(
+                    recipients, formatted_subject, formatted_content, priority
                 )
             else:
-                # Mock sending
-                message_id = f"<{datetime.now().strftime('%Y%m%d%H%M%S')}.{hash(formatted_content) % 10000}@university.edu>"
-                send_status = "success"
-                self._log_email_details(recipients, formatted_subject, formatted_content, "MOCK", message_id)
-            
+                message_id, send_status = self._send_with_mailhog(
+                    recipients, formatted_subject, formatted_content, priority
+                )
+
             # Return the results
             return {
                 "status": send_status,
@@ -201,6 +203,44 @@ Please format the **provided content** into a professional university **HTML** e
             logger.error(f"MailHog error: {e}")
             return None, f"error: {str(e)}"
     
+    def _send_with_mailtrap(self, recipients, subject, content, priority):
+        """
+        Send email via Mailtrap SMTP (requires STARTTLS)
+        """
+        try:
+            logger.info(f"Sending email via Mailtrap to: {recipients}")
+            msg = MIMEMultipart()
+            msg['From']    = self.from_email
+            msg['To']      = ', '.join(recipients if isinstance(recipients, list) else [recipients])
+            msg['Subject'] = subject
+
+            # Priority headers
+            if priority.lower() == "high":
+                msg['X-Priority']        = '1'
+                msg['X-MSMail-Priority'] = 'High'
+                msg['Importance']        = 'High'
+
+            msg.attach(MIMEText(content, 'html'))
+
+            # Connect & secure
+            server = smtplib.SMTP(self.mailtrap_host, self.mailtrap_port)
+            server.starttls()  # <-- important for Mailtrap
+            server.login(self.mailtrap_user, self.mailtrap_pass)
+            server.sendmail(self.from_email, recipients, msg.as_string())
+            server.quit()
+
+            message_id = f"<{datetime.now():%Y%m%d%H%M%S}.{hash(content) % 10000}@mailtrap>"
+            status = "success"
+
+            self._log_email_details(recipients, subject, content, "MAILTRAP", message_id)
+            return message_id, status
+
+        except Exception as e:
+            logger.error(f"Mailtrap error: {e}")
+            return None, f"error: {e}"
+
+
+
     def _log_email_details(self, recipients, subject, content, method, message_id):
         """
         Log detailed information about the email for testing purposes
