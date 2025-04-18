@@ -14,6 +14,7 @@ from agents.coordinators.data_analysis import DataAnalysisCoordinator
 from agents.coordinators.communication import CommunicationCoordinator
 from agents.coordinators.data_management import DataManagementCoordinator
 from agents.coordinators.integration import IntegrationCoordinator
+from agents.coordinators.data_synthetic import SyntheticDataCoordinator
 
 # Import observer for monitoring
 from utils.graph_observer import LangGraphObserver
@@ -61,6 +62,7 @@ def create_workflow(streaming: bool = False) -> StateGraph:
     communication_coordinator = CommunicationCoordinator()
     data_management_coordinator = DataManagementCoordinator()
     integration_coordinator = IntegrationCoordinator()
+    synthetic_data_coordinator = SyntheticDataCoordinator()
     
     # Define the workflow graph
     workflow = StateGraph(GraphState)
@@ -147,6 +149,13 @@ def create_workflow(streaming: bool = False) -> StateGraph:
         
         return result_state
     
+    def synthetic_data_with_tracing(state: GraphState) -> GraphState:
+        tracer.record_agent_activity("synthetic_data", "start", state.get("user_input", ""), None)
+        result_state = synthetic_data_coordinator(state)
+        tracer.record_state_update(result_state)
+        tracer.record_agent_activity("synthetic_data", "complete", state.get("user_input", ""), result_state)
+        return result_state    
+
     # Custom wrapper for integration coordinator
     def integration_with_tracing(state: GraphState) -> GraphState:
         """Run integration coordinator with tracing"""
@@ -222,6 +231,8 @@ def create_workflow(streaming: bool = False) -> StateGraph:
                 route_result = "data_management"
             elif "ROUTE_TO_INTEGRATION" in response:
                 route_result = "integration"
+            elif "ROUTE_TO_SYNTHETIC_DATA" in response:
+                route_result = "data_synthetic"
             elif "FINAL_RESPONSE" in response:
                 # For final responses, clean up the prefix and update the response
                 cleaned_response = re.sub(r'^FINAL_RESPONSE\s*', '', response)
@@ -257,6 +268,7 @@ def create_workflow(streaming: bool = False) -> StateGraph:
             "communication": "communication",
             "data_management": "data_management",
             "integration": "integration",
+            "data_synthetic":  "data_synthetic",
             END: END
         }
     )
@@ -266,6 +278,7 @@ def create_workflow(streaming: bool = False) -> StateGraph:
     workflow.add_edge("communication", "director")
     workflow.add_edge("data_management", "director")
     workflow.add_edge("integration", "director")
+    workflow.add_edge("data_synthetic",  "director")
     
     # Create and add the observer for monitoring
     #observer = LangGraphObserver()

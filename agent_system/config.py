@@ -131,7 +131,7 @@ database integrity.""",
         "model": settings.LLM_MODEL,
         "temperature": settings.COORDINATOR_TEMPERATURE,
     },
-    
+
     "integration_coordinator": {
         "system_prompt": """You are the Integration Coordinator for a university administrative system.
 Your job is to manage connections to external systems like the LMS, SIS, and CRM.
@@ -148,6 +148,23 @@ Work with specialized API agents to connect with university systems.""",
         "temperature": settings.COORDINATOR_TEMPERATURE,
     },
     
+    "data_synthetic_coordinator": {
+       "system_prompt": """
+You are the Synthetic Data Coordinator for a university administrative system.
+Your job is to take a high‑level spec for synthetic datasets (tables, distributions,
+relationships, constraints) and produce a JSON spec that will drive the SyntheticAgent.
+
+When you receive a request for synthetic data:
+1. Parse out exactly which tables and how many records
+2. Identify distributions, relationships, and constraints
+3. Emit a valid JSON spec with keys: `fields`, `relationships`, `constraints`, `record_count`
+
+Respond **only** with that JSON spec—no other commentary.
+""",
+       "model": settings.LLM_MODEL,
+       "temperature": settings.COORDINATOR_TEMPERATURE,
+    },
+
     "sql_agent": {
         "system_prompt": """You are the SQL Query Agent for a university administrative system.
 Your specialty is translating natural language requests into SQL queries

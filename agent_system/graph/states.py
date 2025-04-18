@@ -113,3 +113,10 @@ class IntegrationState(CoordinatorState):
     endpoint: str
     parameters: Dict[str, Any]
     api_result: Optional[ApiCallResult] = None
+
+class SyntheticDataState(CoordinatorState):
+    """State for the Synthetic Data Coordinator"""
+    spec: Dict[str, Any]                  # the JSON spec produced by the coordinator
+    ddl_statements: Optional[List[str]]   # CREATE TABLE …
+    dml_statements: Optional[List[str]]   # INSERT … 
+    generation_error: Optional[str] = None
