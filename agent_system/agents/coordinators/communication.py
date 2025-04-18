@@ -60,7 +60,7 @@ User request:
 
 Communication details:
 - Type: {comm_type}
-- Recipients: {recipient_count} ({recipient_list})
+- Recipients: {recipient_count}
 - Subject: {subject}
 - Email agent result: {result}
 
@@ -153,7 +153,6 @@ Please write a concise confirmation message summarizing the action taken.
             self.logger.info(f"Extracted recipients: {recipients}")
         else:
             self.logger.warning("No valid recipients found, using fallback address")
-            recipients = ["all_students@university.edu"]
 
         steps.append({
             "agent": "communication",
