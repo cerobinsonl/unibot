@@ -309,7 +309,8 @@ def get_engine():
         def getconn():
             return _connector.connect(
                 settings.INSTANCE_CONNECTION_NAME,
-                "pg8000",
+                #"pg8000",
+                "psycopg2",
                 user=settings.DB_USER,
                 password=settings.DB_PASSWORD,
                 db=settings.DB_NAME,
