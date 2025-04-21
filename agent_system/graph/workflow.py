@@ -150,12 +150,12 @@ def create_workflow(streaming: bool = False) -> StateGraph:
         
         return result_state
     
-    def synthetic_data_with_tracing(state: GraphState) -> GraphState:
-        tracer.record_agent_activity("synthetic_data", "start", state.get("user_input", ""), None)
+    def synthetic_data_with_tracing(state):
+        tracer.record_agent_activity("synthetic_data", "start", state.get("user_input",""), None)
         result_state = synthetic_data_coordinator(state)
         tracer.record_state_update(result_state)
-        tracer.record_agent_activity("synthetic_data", "complete", state.get("user_input", ""), result_state)
-        return result_state    
+        tracer.record_agent_activity("synthetic_data", "complete", state.get("user_input",""), result_state)
+        return result_state
 
     # Custom wrapper for integration coordinator
     def integration_with_tracing(state: GraphState) -> GraphState:

@@ -69,7 +69,8 @@ async def process_chat_message(request: ChatRequest):
             "session_id": response_data.get("session_id", agent_request["session_id"]),
             "image_data": visualization.get("image_data", ""),
             "image_type": visualization.get("image_type", "image/png"),
-            "has_visualization": True
+            "has_visualization": True,
+            "visualization": visualization               # keeps old structure alive
         }
     
     # Return standard response

@@ -44,6 +44,8 @@ IMPORTANT ROUTING GUIDELINES:
   * Student Information System (SIS)
   * Customer Relationship Management (CRM)
 - Use ROUTE_TO_DATA_ANALYSIS for queries about data that can be answered from the local database
+- Use ROUTE_TO_SYNTHETIC_DATA for requests that ask you to generate synthetic or test datasets
+- Use DATA_MANAGEMENT for requests that ask you made insertions, modifications or deletes in the dataset
 
 When responding, include EXACTLY ONE of these routing tags at the beginning of your response:
 - ROUTE_TO_DATA_ANALYSIS
@@ -154,6 +156,9 @@ Please synthesize this information into a final response for the university staf
                 # Log the coordinator's response
                 logger.info(f"Coordinator response: {coordinator_response[:500]}...")
             
+            if not coordinator_response:                 
+                coordinator_response = working_state.get("response", "")
+
             # Look for retrieved data (especially from SQL queries)
             retrieved_data = "No specific data retrieved."
             for step in intermediate_steps:
@@ -315,6 +320,8 @@ Please synthesize this information into a final response for the university staf
                 logger.info("Routing to DATA_MANAGEMENT")
             elif "ROUTE_TO_INTEGRATION" in response:
                 logger.info("Routing to INTEGRATION")
+            elif "ROUTE_TO_SYNTHETIC_DATA" in response:
+                logger.info("Routing to SYNTHETIC_DATA")
             elif "FINAL_RESPONSE" in response:
                 logger.info("Providing FINAL_RESPONSE directly")
             else:

@@ -1,247 +1,194 @@
+from __future__ import annotations
+
+"""SyntheticDataCoordinator – updated to avoid .format KeyError
+Located at **agent_system/agents/coordinators/data_synthetic.py**
+"""
+
+import json, re, ast, logging
 import logging
-import json
 import re
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 from config import get_llm
 from agents.specialists.synthetic_agent import SyntheticAgent
 from agents.specialists.sql_agent import SQLAgent
 
+logger = logging.getLogger(__name__)
+
+
 class SyntheticDataCoordinator:
-    """
-    Synthetic Data Coordinator handles complex synthetic data generation
-    workflows: planning distributions, validating against schema,
-    executing DDL/DML, and confirming results.
-    """
+    """Plan + delegate synthetic data generation via SyntheticAgent."""
 
-    # 1) Initial spec planning & insight prompt
-    PLANNING_INSIGHT_PROMPT = """
+    # curly braces inside text need doubling to survive str.format()
+    PLANNING_PROMPT = (
+        """
 You are the Synthetic Data Coordinator for a university administrative system.
-Your job is to translate a user request into a JSON specification for synthetic data generation.
+Break down the user request into a JSON spec with keys:
+  "tables": object  // map "Table" -> rows
+  "fields": object  // map "Table.Column" -> rule string
+  "relationships": object  // map "ChildTable.ChildFK" -> "ParentTable.ParentPK"
+  "constraints": array  // optional global constraints
 
-DATABASE SCHEMA:
-{schema_info}
+Use only these rule patterns (case‑insensitive):
+   fake.<provider>     e.g. fake.first_name
+   choice(a,b,c)
+   int_range(min,max)
+   normal(mu,sigma)
+   constant(value)
+Do not output “uuid”, “firstName”, “date”, or any other custom keyword.
 
-USER REQUEST:
-{user_input}
+If you need a UUID, use fake.uuid4
+If you need a date of birth, use fake.date
 
-Please reply with **only** JSON with keys:
-- tables: {{ "<TableName>": <row_count>, … }}
-- distributions: {{ "<TableName>.<ColumnName>": {{ "min":…, "max":…, "mean":…, "std":… }}, … }}
-- relationships: {{ "<ChildTable>.<FKColumn>": "<ParentTable>.<PKColumn>", … }}
-- constraints: [ … ]   # any global rules, e.g. "Each Class enrolls ≤ 50 students"
-"""
+Primary‑key rule:
+* For any column that is a PRIMARY KEY (or ends with “Id”), either
+  - omit the column entirely (so Postgres generates it with SERIAL/IDENTITY), **or**
+  - set its rule to "fake.uuid4" to guarantee uniqueness.
 
-    # 2) Spec correction prompt
-    SPEC_CORRECTION_PROMPT = """
-The JSON spec you provided did not validate against the current database contents.
+Respond **only** with the JSON object.
 
-Original spec:
-{original_spec}
-
-Validation results:
-{validation_results}
-
-Please reply with a corrected JSON spec only.
-"""
-
-    # 3) Generation prompt
-    GENERATION_PROMPT = """
-You are the Synthetic Data Generator. Using this validated JSON spec:
-{spec}
-
-Produce **only** JSON with keys:
-- ddl: [ <CREATE TABLE ... for temp tables>, … ]
-- dml: [ <INSERT … statements to populate>, … ]
-"""
-
-    # 4) DML correction prompt
-    DML_CORRECTION_PROMPT = """
-Some DDL/DML statements failed with error:
-{error}
-
-Original failed statement:
-{failed_stmt}
-
-Please provide a corrected version of that single statement only.
-"""
-
-    # 5) Final synthesis prompt
-    SYNTHESIS_PROMPT = """
-Synthetic data generation complete.
+Database schema:
+{schema}
 
 User request:
 {user_input}
-
-Records created:
-{creation_summary}
-
-Write a concise confirmation message summarizing these results.
 """
+    )
 
     def __init__(self):
-        self.llm = get_llm("synthetic_data_coordinator")
-        self.synthetic_agent = SyntheticAgent()
-        self.sql_agent = SQLAgent()
-        self.logger = logging.getLogger(__name__)
+        self.llm = get_llm("data_synthetic_coordinator")
+        self.generator = SyntheticAgent()
 
+    # ---------------------------------------------------------------------
     def __call__(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        user_input = state.get("user_input", "")
+        user_input: str = state.get("user_input", "")
         steps: List[Dict[str, Any]] = state.setdefault("intermediate_steps", [])
-        schema_info = self.sql_agent.schema_info
 
-        self.logger.info(f"SyntheticDataCoordinator start: {user_input}")
+        # 1. Ask the LLM for a generation spec ---------------------------------
+        schema_info = self.generator.schema_info
+        prompt = self.PLANNING_PROMPT.format(schema=schema_info, user_input=user_input)
+        raw = self.llm.invoke(prompt).content.strip()
 
-        # --- Step 1: Plan & insight ---
-        plan_prompt = self.PLANNING_INSIGHT_PROMPT.format(
-            schema_info=schema_info,
-            user_input=user_input
-        )
-        self.logger.debug(f"Planning prompt:\n{plan_prompt}")
-        plan_resp = self.llm.invoke(plan_prompt).content.strip()
-        # Clean Markdown fences if any
-        plan_text = re.sub(r"^```json\s*|\s*```$", "", plan_resp, flags=re.MULTILINE)
+        # 1. Remove outer quotes if the model wrapped the whole block
+        if (raw.startswith("'") and raw.endswith("'")) or (raw.startswith('"') and raw.endswith('"')):
+            raw = raw[1:-1]
+
+        # 2. Strip ```json fences (start or end may still have spaces/newlines)
+        clean = re.sub(r"^```\\w*\\s*", "", raw, flags=re.MULTILINE)
+        clean = re.sub(r"^```(?:json)?\s*", "", clean, flags=re.MULTILINE)
+        clean = re.sub(r"\s*```$", "", clean, flags=re.MULTILINE)
+        clean = re.sub(r'^\s*json\s*\n', '', clean, flags=re.IGNORECASE)
+        clean = re.sub(r"\\s*```$", "", clean, flags=re.MULTILINE).strip()
+
+        logger.debug("Cleaned LLM output:\n%s", clean)
+
+        # 3. Try strict JSON
         try:
-            spec = json.loads(plan_text)
+            # 3‑0. parse → spec  --------------------------------------------
+            spec = json.loads(clean)
+
+            # ---------------------------------------------------------------
+            # 3‑1. ►►  NORMALISE & SANITISE THE SPEC  ◄◄
+            # ---------------------------------------------------------------
+            # 3‑1a. ensure each tables[table] is an int
+            fixed_tables = {}
+            for tbl, val in spec.get("tables", {}).items():
+                if isinstance(val, int):
+                    fixed_tables[tbl] = val
+                elif isinstance(val, dict) and "rows" in val:
+                    fixed_tables[tbl] = int(val["rows"])
+                elif isinstance(val, list):
+                    fixed_tables[tbl] = len(val)
+                else:
+                    # instead of dropping the table entirely, give it a 0 count
+                    logger.warning("Unrecognized row spec for %s: %r — defaulting to 0 rows", tbl, val)
+                    fixed_tables[tbl] = 0
+            spec["tables"] = fixed_tables
+
+            # ---------------------------------------------------------------
+            # 3‑1b. ►►  NORMALISE PK RULES FOR INTEGER IDs  ◄◄
+            # ---------------------------------------------------------------
+            # For any *Id PK* field, pick an int_range that starts above the current max in the DB
+            sql_agent = SQLAgent()
+
+            for fq_col in list(spec.get("fields", {})):
+                table, col = fq_col.split(".", 1)
+                if col.lower().endswith("id"):
+                    # how many rows we’re going to generate
+                    N = spec["tables"].get(table, 0)
+                    # ask the real table what its current max is
+                    resp = sql_agent(f'SELECT MAX("{col}") AS max_id FROM "{table}";')
+                    current_max = resp["results"][0].get("max_id") or 0
+                    start = current_max + 1
+                    end   = current_max + N
+                    spec["fields"][fq_col] = f"int_sequence(start={start})"
+
         except json.JSONDecodeError:
-            self.logger.error("Failed to parse spec JSON", exc_info=True)
-            state["response"] = "Sorry, I couldn't understand how to generate synthetic data for that request."
-            state["current_agent"] = "synthetic_data"
-            return state
-
-        steps.append({
-            "agent": "synthetic_data",
-            "action": "plan_spec",
-            "input": user_input,
-            "output": spec,
-            "timestamp": datetime.now().isoformat()
-        })
-
-        # --- Step 2: Validate spec via SQLAgent ---
-        validation_errors = []
-        for table, expected_count in spec.get("tables", {}).items():
-            q = f'SELECT COUNT(*) AS cnt FROM "{table}"'
-            res = self.sql_agent(q)
-            actual = res.get("results", [{}])[0].get("cnt", 0)
-            if abs(actual - expected_count) > max(1, 0.05 * expected_count):
-                validation_errors.append(
-                    f'Table {table}: expected {expected_count}, actual {actual}'
-                )
-
-        if validation_errors:
-            val_prompt = self.SPEC_CORRECTION_PROMPT.format(
-                original_spec=json.dumps(spec, indent=2),
-                validation_results=json.dumps(validation_errors, indent=2)
+            # 4. Lenient: replace common Pythonisms → JSON
+            safe = (
+                clean.replace("true", "true")
+                    .replace("false", "false")
+                    .replace("None", "null")
             )
-            self.logger.debug(f"Spec correction prompt:\n{val_prompt}")
-            corrected = self.llm.invoke(val_prompt).content.strip()
-            corrected_text = re.sub(r"^```json\s*|\s*```$", "", corrected, flags=re.MULTILINE)
             try:
-                spec = json.loads(corrected_text)
-            except json.JSONDecodeError:
-                self.logger.error("Failed to parse corrected spec JSON", exc_info=True)
-                state["response"] = "I attempted to adjust the plan but couldn't produce a valid spec."
-                state["current_agent"] = "synthetic_data"
+                spec = ast.literal_eval(safe)
+            except Exception:
+                logger.error("Unable to parse spec:\n%s", clean, exc_info=True)
+                state.update(
+                    response="I couldn't understand the synthetic‑data spec the LLM produced.",
+                    current_agent="synthetic_data",
+                )
                 return state
 
-            steps.append({
-                "agent": "synthetic_data",
-                "action": "correct_spec",
-                "input": validation_errors,
-                "output": spec,
-                "timestamp": datetime.now().isoformat()
-            })
 
-        # --- Step 3: Generate DDL + DML ---
-        gen_prompt = self.GENERATION_PROMPT.format(spec=json.dumps(spec, indent=2))
-        self.logger.debug(f"Generation prompt:\n{gen_prompt}")
-        gen_resp = self.llm.invoke(gen_prompt).content.strip()
-        gen_text = re.sub(r"^```json\s*|\s*```$", "", gen_resp, flags=re.MULTILINE)
+        # --- NEW: enforce num_rows constraints first --------------------------
+        for c in spec.get("constraints", []):
+            m = re.match(r'num_rows\((\w+)\)\s*==\s*(\d+)', c)
+            if m:
+                table, cnt = m.group(1), int(m.group(2))
+                spec["tables"][table] = cnt
+
+        # --- NEW: fallback to user_input count if still all zeros ------------
+        if all(v == 0 for v in spec["tables"].values()):
+            m = re.search(r'(\d+)', user_input)
+            if m:
+                count = int(m.group(1))
+                # pick out only the real (non‑temp) tables
+                real_tables = [t for t in spec["tables"].keys() if not t.startswith("temp_")]
+                # assign that count to *each* table
+                for tbl in real_tables:
+                    spec["tables"][tbl] = count
+
+        logger.debug("Specs :\n%s", spec)
+
+        # Ensure a temp prefix
+        spec["temp_prefix"] = spec.get(
+            "temp_prefix", f"temp_synth_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+        )
+        
+        logger.debug("Specs failed:\n%s", spec)
+
+        # 2. Delegate to SyntheticAgent ----------------------------------------
         try:
-            ddl_dml = json.loads(gen_text)
-            ddls = ddl_dml.get("ddl", [])
-            dmls = ddl_dml.get("dml", [])
-        except json.JSONDecodeError:
-            self.logger.error("Failed to parse DDL/DML JSON", exc_info=True)
-            state["response"] = "I couldn't generate the SQL statements for synthetic data."
-            state["current_agent"] = "synthetic_data"
+            report = self.generator(spec)  # returns dict {table: rows_inserted}
+            logger.debug("Synthetic Agent response:\n%s", report)
+        except Exception as e:
+            logger.exception("SyntheticAgent failed")
+            state.update(
+                response=f"Synthetic data generation failed: {e}",
+                current_agent="synthetic_data",
+            )
             return state
 
-        steps.append({
-            "agent": "synthetic_data",
-            "action": "generate_ddl_dml",
-            "input": spec,
-            "output": ddl_dml,
-            "timestamp": datetime.now().isoformat()
-        })
-
-        # --- Step 4: Execute DDL + DML with retry on error ---
-        all_statements = ddls + dmls
-        for stmt in all_statements:
-            res = self.sql_agent(stmt)
-            if res.get("is_error"):
-                # Attempt single-statement correction
-                corr_prompt = self.DML_CORRECTION_PROMPT.format(
-                    error=res["error"],
-                    failed_stmt=stmt
-                )
-                self.logger.debug(f"DML correction prompt:\n{corr_prompt}")
-                corrected_stmt = self.llm.invoke(corr_prompt).content.strip()
-                corrected_stmt = re.sub(r"^```sql\s*|\s*```$", "", corrected_stmt, flags=re.MULTILINE)
-
-                steps.append({
-                    "agent": "synthetic_data",
-                    "action": "correct_ddl_dml",
-                    "input": {"original": stmt, "error": res["error"]},
-                    "output": corrected_stmt,
-                    "timestamp": datetime.now().isoformat()
-                })
-
-                # Retry
-                res = self.sql_agent(corrected_stmt)
-                if res.get("is_error"):
-                    self.logger.error(f"Failed to execute statement even after correction: {res['error']}")
-                    state["response"] = f"Error populating synthetic data: {res['error']}"
-                    state["current_agent"] = "synthetic_data"
-                    return state
-
-        steps.append({
-            "agent": "synthetic_data",
-            "action": "execute_ddl_dml",
-            "input": all_statements,
-            "output": {"status": "all statements executed"},
-            "timestamp": datetime.now().isoformat()
-        })
-
-        # --- Step 5: Final validation & summary collection ---
-        creation_summary = {}
-        for table in spec.get("tables", {}):
-            temp = f"temp_{table.lower()}"
-            q = f'SELECT COUNT(*) AS cnt FROM "{temp}"'
-            res = self.sql_agent(q)
-            cnt = res.get("results", [{}])[0].get("cnt", 0)
-            creation_summary[temp] = cnt
-
-        steps.append({
-            "agent": "synthetic_data",
-            "action": "final_validation",
-            "input": None,
-            "output": creation_summary,
-            "timestamp": datetime.now().isoformat()
-        })
-
-        # --- Step 6: Synthesize confirmation ---
-        summary_lines = [f"{tbl}: {cnt} rows" for tbl, cnt in creation_summary.items()]
-        summary_text = "\n".join(summary_lines)
-        synth_prompt = self.SYNTHESIS_PROMPT.format(
-            user_input=user_input,
-            creation_summary=summary_text
+        # 3. Compose user‑facing confirmation ----------------------------------
+        tables_done = ", ".join(f"{t} ({n})" for t, n in report.items())
+        confirmation = (
+            f"Generated synthetic data successfully. Rows inserted per table: {tables_done}."
         )
-        self.logger.debug(f"Synthesis prompt:\n{synth_prompt}")
-        confirmation = self.llm.invoke(synth_prompt).content.strip()
 
-        state["response"] = confirmation
-        state["intermediate_steps"] = steps
-        state["current_agent"] = "synthetic_data"
+        state.update(
+            response=confirmation,
+            current_agent="synthetic_data",
+        )
         return state

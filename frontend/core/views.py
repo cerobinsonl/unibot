@@ -101,12 +101,14 @@ def chatbot_message(request):
             }
             
             # Handle visualization if present
-            if 'visualization' in response_data and response_data['visualization']:
-                viz_data = response_data['visualization']
-                if 'image_data' in viz_data and viz_data['image_data']:
-                    result['image_data'] = viz_data['image_data']
-                    result['image_type'] = viz_data.get('image_type', 'image/png')
-                    print(f"Added visualization to result, data length: {len(viz_data['image_data'])}")
+            if response_data.get('visualization'):                     # original scheme
+                viz = response_data['visualization']
+                result['image_data'] = viz.get('image_data')
+                result['image_type'] = viz.get('image_type', 'image/png')
+
+            elif response_data.get('image_data'):                      # flattened scheme from /chat/message
+                result['image_data'] = response_data['image_data']
+                result['image_type'] = response_data.get('image_type', 'image/png')
             
             return JsonResponse(result)
         except Exception as e:

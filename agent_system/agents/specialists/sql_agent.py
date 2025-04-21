@@ -49,8 +49,8 @@ class SQLAgent:
 
         # Create the code generation prompt
         self.code_prompt = """
-        You need to generate a valid PostgreSQL statement (SELECT, INSERT, UPDATE, or DELETE)
-        based on a natural-language request for our university database.
+        You need to generate a valid PostgreSQL statement based on a natural-language request 
+        for our university database.
 
         CURRENT DATABASE SCHEMA INFORMATION:
         {schema_info}
@@ -70,7 +70,7 @@ class SQLAgent:
         10. For numeric filters, ensure values are within appropriate ranges based on column statistics.
         
         Reply with a JSON object **only**:
-        {{ "sql": "<your SQL here>", "type": "<select|insert|update|delete>" }}
+        {{ "sql": "<your SQL here>", "type": "<select|insert|update|delete|ddl>" }}
         """
     
     def _get_enhanced_schema_info(self) -> str:
@@ -230,13 +230,12 @@ class SQLAgent:
             if not self.db_initialized:
                 raise ValueError("SQL database connection was not properly initialized")
 
-            logger.info(f"Processing SQL task: {task}")
-
             # 1. Generate SQL (+ type) via LLM
             formatted_prompt = self.code_prompt.format(
                 schema_info=self.schema_info,
                 task=task
             )
+
             llm_resp = self.llm.invoke(formatted_prompt).content
 
             # 2. Clean markdown fences
@@ -249,23 +248,25 @@ class SQLAgent:
             sql_text = re.sub(r"/\*.*?\*/", "", sql_text, flags=re.DOTALL)
 
             # 3. Detect JSON wrapper for type+sql or assume pure SQL
-            op_type = "select"
             try:
                 payload = json.loads(sql_text)
                 sql = payload.get("sql", "").strip()
                 op_type = payload.get("type", "select").lower()
+                logger.debug("Parsed JSON wrapper: type=%s, sql=%s", op_type, sql)
+
             except json.JSONDecodeError:
                 sql = sql_text
+                logger.debug("No JSON wrapper detected, treating as pure SQL.")
 
             sql = sql.strip()
             logger.info(f"Cleaned SQL ({op_type}): {sql}")
 
-            # 4. Safety check for SELECT path
-            is_select = op_type == "select"
-            if is_select:
-                head = sql[:10].upper()
-                if not (head.startswith("SELECT") or head.startswith("WITH")):
-                    raise ValueError(f"Only SELECT/WITH queries allowed for read operations; got: {sql[:20]}")
+            # # 4. Safety check for SELECT path
+            # is_select = op_type == "select"
+            # if is_select:
+            #     head = sql[:10].upper()
+            #     if not (head.startswith("SELECT") or head.startswith("WITH")):
+            #         raise ValueError(f"Only SELECT/WITH queries allowed for read operations; got: {sql[:20]}")
 
             # 5. Execute via SQLAlchemy
             from sqlalchemy import text

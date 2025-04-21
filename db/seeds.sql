@@ -6,6 +6,24 @@
 -- Arrays for more diverse and realistic data generation
 DO $$
 DECLARE
+    -- Loop variables for category guarantees
+    need   INTEGER;
+    have  INTEGER;
+	have2  INTEGER;
+    need2  INTEGER;
+    have3  INTEGER;
+    need3  INTEGER;
+    have4  INTEGER;
+    need4  INTEGER;
+    have5  INTEGER;
+    need5  INTEGER;
+    -- Loop variables for FOREACH
+    aid   TEXT;
+    jt    TEXT;
+    awd   TEXT;
+    stand TEXT;
+    prog  TEXT;
+
     student_rec  RECORD;
     class_rec    RECORD;
     first_names TEXT[] := ARRAY[
@@ -39,7 +57,7 @@ DECLARE
     ];
     
     email_domains TEXT[] := ARRAY[
-        'university.edu', 'u-college.edu', 'students.stateu.edu', 'umail.com', 'campus.net', 'alumni.tech.edu'
+        'university.edu', 'alumni.tech.edu'
     ];
     
     area_codes TEXT[] := ARRAY['201', '202', '212', '213', '301', '302', '303', '305', '310', '312', '404', '408', '415', '505', '510', '512', '602', '617', '702', '713', '802', '830', '901', '916', '919'];
@@ -780,4 +798,115 @@ BEGIN
     ) AS aw
     WHERE faa."FinancialAidId" = aw."FinancialAidId";
 
+
+-- =============================================================================
+--  ● Enhanced category guarantees (min 50 per type)
+-- =============================================================================
+
+-- AidType in FinancialAid
+FOREACH aid IN ARRAY aid_types LOOP
+  SELECT COUNT(*) INTO have FROM "FinancialAid" WHERE "AidType" = aid;
+  need := GREATEST(0, 50 - have);
+  IF need > 0 THEN
+    INSERT INTO "FinancialAid" ("PersonId","ApplicationDate","AidType","AmountRequested","AmountGranted","Status")
+    SELECT p."PersonId",
+           CURRENT_DATE - ((floor(random()*180))::int * INTERVAL '1 day'),
+           aid,
+           round((1000 + random()*5000)::numeric, 2),
+           NULL,
+           'Pending'
+    FROM "Person" p
+    JOIN "OperationPersonRole" opr ON p."PersonId" = opr."PersonId"
+    WHERE opr."RoleName" = 'Student'
+      AND NOT EXISTS (
+        SELECT 1 FROM "FinancialAid" fa
+         WHERE fa."PersonId" = p."PersonId" AND fa."AidType" = aid
+      )
+    LIMIT need;
+  END IF;
+END LOOP;
+
+-- JobTitle in PsStudentEmployment
+FOREACH jt IN ARRAY job_titles LOOP
+  SELECT COUNT(*) INTO have2 FROM "PsStudentEmployment" WHERE "JobTitle" = jt;
+  need2 := GREATEST(0, 50 - have2);
+  IF need2 > 0 THEN
+    INSERT INTO "PsStudentEmployment" ("PersonId","EmployerName","JobTitle","StartDate","EndDate")
+    SELECT p."PersonId",
+           (SELECT employer_names[1]),
+           jt,
+           CURRENT_DATE - ((floor(random()*365)+30)::int * INTERVAL '1 day'),
+           NULL
+    FROM "Person" p
+    JOIN "OperationPersonRole" opr ON p."PersonId" = opr."PersonId"
+    WHERE opr."RoleName" = 'Student'
+      AND NOT EXISTS (
+        SELECT 1 FROM "PsStudentEmployment" e
+         WHERE e."PersonId" = p."PersonId" AND e."JobTitle" = jt
+      )
+    LIMIT need2;
+  END IF;
+END LOOP;
+
+-- AwardTitle in PsStudentAcademicAward
+FOREACH awd IN ARRAY award_titles LOOP
+  SELECT COUNT(*) INTO have3 FROM "PsStudentAcademicAward" WHERE "AwardTitle" = awd;
+  need3 := GREATEST(0, 50 - have3);
+  IF need3 > 0 THEN
+    INSERT INTO "PsStudentAcademicAward" ("StudentAcademicRecordId","AwardTitle","AwardDate")
+    SELECT sar."StudentAcademicRecordId",
+           awd,
+           CURRENT_DATE - (floor(random()*365)::int * INTERVAL '1 day')
+    FROM "PsStudentAcademicRecord" sar
+    WHERE NOT EXISTS (
+      SELECT 1 FROM "PsStudentAcademicAward" aa
+       WHERE aa."StudentAcademicRecordId" = sar."StudentAcademicRecordId"
+         AND aa."AwardTitle" = awd
+    )
+    LIMIT need3;
+  END IF;
+END LOOP;
+
+-- AcademicStanding in PsStudentAcademicRecord
+FOREACH stand IN ARRAY academic_standings LOOP
+  SELECT COUNT(*) INTO have4 FROM "PsStudentAcademicRecord" WHERE "AcademicStanding" = stand;
+  need4 := GREATEST(0, 50 - have4);
+  IF need4 > 0 THEN
+    UPDATE "PsStudentAcademicRecord" sar
+    SET "AcademicStanding" = stand
+    WHERE sar."StudentAcademicRecordId" IN (
+      SELECT sar2."StudentAcademicRecordId"
+      FROM "PsStudentAcademicRecord" sar2
+      WHERE sar2."AcademicStanding" IS DISTINCT FROM stand
+      LIMIT need4
+    );
+  END IF;
+END LOOP;
+
+-- ProgramName in PsStudentProgram (secondary)
+FOREACH prog IN ARRAY program_names LOOP
+  SELECT COUNT(*) INTO have5 FROM "PsStudentProgram" WHERE "ProgramName" = prog;
+  need5 := GREATEST(0, 50 - have5);
+  IF need5 > 0 THEN
+    INSERT INTO "PsStudentProgram" ("PersonId","ProgramName","StartTerm","EndTerm")
+    SELECT student_base."PersonId", prog, student_base."StartTerm", student_base."EndTerm"
+    FROM (
+      SELECT p."PersonId",
+             CASE WHEN EXTRACT(MONTH FROM opr."StartDate") BETWEEN 1 AND 5 THEN EXTRACT(YEAR FROM opr."StartDate")::text||'-Spring'
+                  WHEN EXTRACT(MONTH FROM opr."StartDate") BETWEEN 6 AND 7 THEN EXTRACT(YEAR FROM opr."StartDate")::text||'-Summer'
+                  ELSE EXTRACT(YEAR FROM opr."StartDate")::text||'-Fall' END AS "StartTerm",
+             CASE WHEN EXTRACT(MONTH FROM opr."StartDate") BETWEEN 1 AND 5 THEN (EXTRACT(YEAR FROM opr."StartDate")+4)::text||'-Spring'
+                  WHEN EXTRACT(MONTH FROM opr."StartDate") BETWEEN 6 AND 7 THEN (EXTRACT(YEAR FROM opr."StartDate")+4)::text||'-Summer'
+                  ELSE (EXTRACT(YEAR FROM opr."StartDate")+4)::text||'-Fall' END AS "EndTerm"
+      FROM "Person" p
+      JOIN "OperationPersonRole" opr ON p."PersonId" = opr."PersonId"
+      WHERE opr."RoleName" = 'Student'
+    ) AS student_base
+    WHERE NOT EXISTS (
+      SELECT 1 FROM "PsStudentProgram" spp
+       WHERE spp."PersonId" = student_base."PersonId" AND spp."ProgramName" = prog
+    )
+    LIMIT need5;
+  END IF;
+END LOOP;
 END $$;

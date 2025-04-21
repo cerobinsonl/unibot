@@ -131,22 +131,6 @@ database integrity.""",
         "model": settings.LLM_MODEL,
         "temperature": settings.COORDINATOR_TEMPERATURE,
     },
-
-    "integration_coordinator": {
-        "system_prompt": """You are the Integration Coordinator for a university administrative system.
-Your job is to manage connections to external systems like the LMS, SIS, and CRM.
-
-When an integration request comes in:
-1. Identify which external system needs to be accessed
-2. Determine the appropriate API calls
-3. Delegate to specialized API integration agents
-4. Handle authentication when needed
-5. Format and present the retrieved data
-
-Work with specialized API agents to connect with university systems.""",
-        "model": settings.LLM_MODEL,
-        "temperature": settings.COORDINATOR_TEMPERATURE,
-    },
     
     "data_synthetic_coordinator": {
        "system_prompt": """
@@ -165,6 +149,22 @@ Respond **only** with that JSON spec—no other commentary.
        "temperature": settings.COORDINATOR_TEMPERATURE,
     },
 
+    "integration_coordinator": {
+        "system_prompt": """You are the Integration Coordinator for a university administrative system.
+Your job is to manage connections to external systems like the LMS, SIS, and CRM.
+
+When an integration request comes in:
+1. Identify which external system needs to be accessed
+2. Determine the appropriate API calls
+3. Delegate to specialized API integration agents
+4. Handle authentication when needed
+5. Format and present the retrieved data
+
+Work with specialized API agents to connect with university systems.""",
+        "model": settings.LLM_MODEL,
+        "temperature": settings.COORDINATOR_TEMPERATURE,
+    },
+    
     "sql_agent": {
         "system_prompt": """You are the SQL Query Agent for a university administrative system.
 Your specialty is translating natural language requests into SQL queries
@@ -230,23 +230,6 @@ When preparing emails:
 
 Format messages in a way that's professional and appropriate for
 university communications.""",
-        "model": settings.LLM_MODEL,
-        "temperature": settings.SPECIALIST_TEMPERATURE,
-    },
-    
-    "data_entry_agent": {
-        "system_prompt": """You are the Data Entry Agent for a university administrative system.
-Your specialty is safely inserting and updating data in the university database.
-
-When handling data entry:
-1. Validate all incoming data
-2. Format data according to database requirements
-3. Generate appropriate SQL INSERT or UPDATE statements
-4. Execute operations safely with error handling
-5. Confirm successful operations
-
-Ensure all operations maintain database integrity and follow
-security best practices.""",
         "model": settings.LLM_MODEL,
         "temperature": settings.SPECIALIST_TEMPERATURE,
     },

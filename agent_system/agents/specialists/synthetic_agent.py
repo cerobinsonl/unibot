@@ -1,141 +1,176 @@
+from __future__ import annotations
+
+"""SyntheticAgent – second‑generation synthetic data generator that uses RowFactory
+for row‑level generation and bulk COPY loading instead of INSERT … SELECT.
+
+Key features
+============
+* **RowFactory integration** – simple rule strings (``fake.name``, ``choice(A,B)``,
+  ``normal(70,10)`` …) handled in Python; no heavy SQL random functions.
+* **Fast bulk load** – generates a CSV in‑memory and sends it through `COPY FROM
+  STDIN` for 10×‑100× speed‑up versus row‑at‑a‑time INSERT.
+* **Referential integrity** – supports ``relationships`` spec by sampling keys
+  from parent tables already generated in the same temp schema.
+* **Reproducibility** – optional deterministic seed so runs are repeatable.
+
+This agent is designed to be called by **SyntheticDataCoordinator** with an
+LLM‑produced spec::
+
+    {
+      "tables": {"Student": 1000, "Enrollment": 3000},
+      "fields": {
+        "Student.FirstName": "fake.first_name",
+        "Student.GPA": "normal(3.2,0.4)",
+        "Enrollment.Grade": "choice(A,B,C,D,F)"
+      },
+      "relationships": {"Enrollment.StudentId": "Student.StudentId"},
+      "constraints": [],
+      "temp_prefix": "temp_synth_20250420_ab12"
+    }
+"""
+
+import io
 import logging
-from typing import Dict, Any
-from sqlalchemy import text
-import pandas as pd
+import random
+from typing import Any, Dict, List
+
 import numpy as np
+import pandas as pd
+from psycopg2 import sql  # type: ignore
+from sqlalchemy import text
 
 from config import get_engine
 from agents.specialists.sql_agent import SQLAgent
+from agents.specialists.row_factory import RowFactory
+from contextlib import closing
 
 logger = logging.getLogger(__name__)
 
+
 class SyntheticAgent:
-    """
-    Synthetic Data Generator that:
-    - Reads a spec with tables/fields/relationships/constraints + temp_prefix
-    - Creates temp tables named {temp_prefix}_{Table}
-    - Populates them with synthetic data
-    - Returns how many rows were inserted per table
-    """
+    """Generates and bulk‑loads synthetic data into temporary Postgres tables."""
 
-    def __init__(self):
+    def __init__(self, *, seed: int | None = None):
         self.engine = get_engine()
-        self.schema_info = SQLAgent().schema_info  # raw CREATE statements for production tables
+        self.sql_agent = SQLAgent()
+        self.row_factory = RowFactory(seed=seed or random.randrange(1 << 30))
+        self.schema_info = self.sql_agent.schema_info  # raw CREATE statements
 
-    def __call__(self, spec: Dict[str, Any]) -> Dict[str, Any]:
+    # ------------------------------------------------------------------
+    def __call__(self, spec: Dict[str, Any]) -> Dict[str, int]:
+        """Execute the full run defined by *spec*.
+
+        Returns a mapping ``table -> rows_inserted`` so the Coordinator can
+        summarise progress.
+        """
         temp_prefix = spec["temp_prefix"]
-        tables = spec.get("tables", {})
-        fields_spec = spec.get("fields", {})
-        relationships = spec.get("relationships", {})
-        constraints = spec.get("constraints", [])
+        generated_counts: Dict[str, int] = {}
 
-        created_counts = {}
+        for table, tbl_cfg in spec.get("tables", {}).items():
+            n_rows = tbl_cfg["rows"] if isinstance(tbl_cfg, dict) else tbl_cfg
+            if n_rows <= 0:
+                continue
 
-        for table_name, row_count in tables.items():
-            temp_table = f"{temp_prefix}_{table_name}"
-            logger.info(f"Creating temp table {temp_table} for {row_count} rows")
+            temp_table = f"{temp_prefix}_{table}"
+            logger.info("Generating %s rows for table %s (temp table %s)", n_rows, table, temp_table)
 
-            # 1. Drop & recreate temp table based on production schema
-            ddl = self._extract_create_statement(table_name, temp_table)
+            # ------------------------------------------------------------------
+            # 1. Create TEMP TABLE with identical structure
+            ddl = f"DROP TABLE IF EXISTS \"{temp_table}\";"
+            ddl += f"CREATE TABLE \"{temp_table}\" AS TABLE \"{table}\" WITH NO DATA;"
             with self.engine.begin() as conn:
-                conn.execute(text(f'DROP TABLE IF EXISTS "{temp_table}";'))
+                conn.execute(text(f'DROP TABLE IF EXISTS "{temp_table}"'))
                 conn.execute(text(ddl))
 
-            # 2. Generate a DataFrame of synthetic rows
-            df = self._generate_table_rows(table_name, row_count, fields_spec, relationships)
-
-            # 3. Bulk‐insert via pandas to_sql
-            df.to_sql(
-                name=temp_table,
-                con=self.engine,
-                if_exists="append",
-                index=False,
-                method="multi"
+            # ------------------------------------------------------------------
+            # 2. Generate synthetic DataFrame via RowFactory
+            df = self._generate_table_rows(
+                base_table=table,
+                temp_table=temp_table,
+                n=n_rows,
+                fields_spec=spec.get("fields", {}),
+                relationships=spec.get("relationships", {}),
             )
 
-            created_counts[table_name] = row_count
-            logger.info(f"Inserted {row_count} rows into {temp_table}")
+            # ------------------------------------------------------------------
+            # 3. Bulk COPY into Postgres
+            self._copy_dataframe_to_table(df, temp_table)
+            generated_counts[table] = len(df)
+            logger.info("Loaded %s rows into %s", len(df), temp_table)
 
-        return {
-            "created": created_counts,
-            "temp_prefix": temp_prefix
-        }
+        return generated_counts
 
-    def _extract_create_statement(self, source_table: str, temp_table: str) -> str:
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _build_temp_table_ddl(self, source_table: str, temp_table: str) -> str:
         """
-        Locate the CREATE TABLE for source_table in self.schema_info,
-        then rewrite it to CREATE TABLE "{temp_table}" (…) with identical columns.
+        Create a temp table that clones the production table’s structure
+        without copying any rows.
         """
-        # naive split on blank line
-        chunks = self.schema_info.split("\n\n")
-        for chunk in chunks:
-            if chunk.startswith(f'CREATE TABLE "{source_table}"'):
-                # replace table name
-                return chunk.replace(f'CREATE TABLE "{source_table}"',
-                                     f'CREATE TABLE "{temp_table}"')
-        raise ValueError(f"Schema for table {source_table} not found")
+        return (
+            f'CREATE TEMPORARY TABLE "{temp_table}" '
+            f'(LIKE "{source_table}" INCLUDING ALL);'
+        )
+        raise ValueError(f"Cannot find DDL for {source_table}")
 
+    # .................................................................
     def _generate_table_rows(
         self,
-        table: str,
+        *,
+        base_table: str,
+        temp_table: str,
         n: int,
         fields_spec: Dict[str, Any],
-        relationships: Dict[str, str]
+        relationships: Dict[str, str],
     ) -> pd.DataFrame:
-        """
-        Build a DataFrame with n rows for 'table', applying:
-        - fields_spec: e.g. { "Person.GPA": {"distribution":"normal","mean":3.2,"std":0.4}, ... }
-        - relationships: e.g. { "Enrollment.PersonId": "Person.PersonId", ... }
-        """
-        # 1. Inspect production schema for column names/types
-        # Here we assume SQLAgent can give us a list of columns
-        sql_agent = SQLAgent()
-        # hack: ask SQLAgent for zero‐row SELECT to get column order
-        probe = sql_agent(f"SELECT * FROM \"{table}\" LIMIT 0;")
-        cols = probe.get("column_names", [])
+        """Generate a DataFrame for *base_table* with *n* rows using RowFactory."""
+        # 1. Get column order from information_schema via SQLAgent (LIMIT 0)
+        probe = self.sql_agent(f'SELECT * FROM "{base_table}" LIMIT 0;')
+        columns: List[str] = probe.get("column_names", [])
 
-        data = {}
-        for col in cols:
-            fq = f"{table}.{col}"
-            spec = fields_spec.get(fq, {})
-
-            # Numeric with normal distribution
-            if spec.get("distribution") == "normal":
-                mean = spec.get("mean", 0)
-                std = spec.get("std", 1)
-                data[col] = np.random.normal(loc=mean, scale=std, size=n).round(2)
-
-            # Categorical choices
-            elif "choices" in spec:
-                choices = spec["choices"]
-                data[col] = np.random.choice(choices, size=n)
-
-            # If this column is a foreign‑key in relationships, just fill later
-            elif fq in relationships:
-                data[col] = [None] * n  # placeholder
-
-            # Fallback: numeric→uniform; strings→empty or sequential
-            else:
-                # numeric?
-                sample_type = probe["results"][0].get(col) if probe.get("results") else None
-                if isinstance(sample_type, (int, float)):
-                    data[col] = np.random.randint(0, 100, size=n)
-                else:
-                    data[col] = ["" for _ in range(n)]
-
-        df = pd.DataFrame(data)
-
-        # 2. Fill relationships by sampling keys from parent temp tables
-        for child_col, parent_ref in relationships.items():
-            # parent_ref = "ParentTable.ParentKey"
-            parent_table, parent_key = parent_ref.split(".")
-            parent_temp = f"{spec['temp_prefix']}_{parent_table}"
-            parent_rows = self.engine.execute(
-                text(f'SELECT "{parent_key}" FROM "{parent_temp}"')
-            ).fetchall()
-            parent_keys = [r[0] for r in parent_rows]
-
-            df_col = child_col.split(".")[1]
-            df[df_col] = np.random.choice(parent_keys, size=n)
-
+        rows = self.row_factory.generate_rows(
+            table=base_table,
+            columns=columns,
+            n=n,
+            fields_spec=fields_spec,
+            relationships=relationships,
+        )
+        df = pd.DataFrame(rows, columns=columns)
         return df
+
+    # .................................................................
+    def _sample_parent_keys(
+        self,
+        parent_table: str,
+        parent_key: str,
+        relationships: Dict[str, str],
+        child_temp_table: str,
+    ) -> List[Any]:
+        """Fetch existing parent key values from the already‑generated temp table."""
+        # infer the same temp prefix from child_table name
+        prefix = child_temp_table.split("_", maxsplit=2)[0]  # crude but effective
+        parent_temp = f"{prefix}_{parent_table}"
+        with self.engine.connect() as conn:
+            result = conn.execute(text(f'SELECT "{parent_key}" FROM "{parent_temp}"'))
+            keys = [r[0] for r in result]
+        return keys
+
+    def _copy_dataframe_to_table(self, df: pd.DataFrame, table_name: str) -> None:
+        if df.empty:
+            return
+        buf = io.StringIO()
+        df.to_csv(buf, index=False, header=False)
+        buf.seek(0)
+
+        raw = self.engine.raw_connection()          # ← no “with”
+        try:
+            with raw.cursor() as cur:
+                stmt = sql.SQL("COPY {} FROM STDIN WITH CSV").format(
+                    sql.Identifier(table_name)
+                )
+                cur.copy_expert(stmt.as_string(cur), buf)
+            raw.commit()
+        finally:
+            raw.close()
