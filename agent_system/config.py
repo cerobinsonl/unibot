@@ -318,7 +318,7 @@ def get_engine():
             )
 
         return create_engine(
-            "postgresql+pg8000://",
+            "postgresql+psycopg2://",
             creator=getconn,
         )
 
