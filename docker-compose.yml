@@ -72,7 +72,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
-      - LLM_MODEL=${LLM_MODEL:-gemini-pro}
+      - LLM_MODEL=${LLM_MODEL:-gemini-2.0-flash}
       - API_DEBUG=${API_DEBUG:-false}
       - AGENT_DEBUG=${AGENT_DEBUG:-false}
       - MOCK_EXTERNAL_APIS=${MOCK_EXTERNAL_APIS:-true}
