@@ -38,6 +38,7 @@ import numpy as np
 import pandas as pd
 from psycopg2 import sql  # type: ignore
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from config import get_engine
 from agents.specialists.sql_agent import SQLAgent
@@ -157,42 +158,22 @@ class SyntheticAgent:
             keys = [r[0] for r in result]
         return keys
 
-    # def _copy_dataframe_to_table(self, df: pd.DataFrame, table_name: str) -> None:
-    #     if df.empty:
-    #         return
-    #     buf = io.StringIO()
-    #     df.to_csv(buf, index=False, header=False)
-    #     buf.seek(0)
-
-    #     raw = self.engine.raw_connection()          # ← no “with”
-    #     try:
-    #         with raw.cursor() as cur:
-    #             stmt = sql.SQL("COPY {} FROM STDIN WITH CSV").format(
-    #                 sql.Identifier(table_name)
-    #             )
-    #             cur.copy_expert(stmt.as_string(cur), buf)
-    #         raw.commit()
-    #     finally:
-    #         raw.close()
-
     def _copy_dataframe_to_table(self, df: pd.DataFrame, table_name: str) -> None:
         if df.empty:
             return
 
-        buf = io.StringIO()
-        df.to_csv(buf, index=False, header=False)
-        buf.seek(0)
-
-        raw = self.engine.raw_connection()   # get the raw psycopg2 connection
         try:
-            cur = raw.cursor()               # plain cursor, no “with”
-            try:
-                stmt = sql.SQL("COPY {} FROM STDIN WITH CSV").format(
-                    sql.Identifier(table_name)
-                )
-                cur.copy_expert(stmt.as_string(cur), buf)
-                raw.commit()
-            finally:
-                cur.close()                  # make sure to close the cursor
-        finally:
-            raw.close()                      # and the raw connection
+            # Use pandas’ built‑in batch INSERT support via SQLAlchemy
+            df.to_sql(
+                name=table_name,
+                con=self.engine,
+                if_exists="append",
+                index=False,
+                method="multi",      # send many rows per INSERT
+                chunksize=500        # tweak this for optimal batch size
+            )
+        except SQLAlchemyError as e:
+            # fallback / logging
+            logger.error(f"Error bulk inserting into {table_name}: {e}")
+            raise
+
