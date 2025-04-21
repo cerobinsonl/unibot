@@ -157,20 +157,42 @@ class SyntheticAgent:
             keys = [r[0] for r in result]
         return keys
 
+    # def _copy_dataframe_to_table(self, df: pd.DataFrame, table_name: str) -> None:
+    #     if df.empty:
+    #         return
+    #     buf = io.StringIO()
+    #     df.to_csv(buf, index=False, header=False)
+    #     buf.seek(0)
+
+    #     raw = self.engine.raw_connection()          # ← no “with”
+    #     try:
+    #         with raw.cursor() as cur:
+    #             stmt = sql.SQL("COPY {} FROM STDIN WITH CSV").format(
+    #                 sql.Identifier(table_name)
+    #             )
+    #             cur.copy_expert(stmt.as_string(cur), buf)
+    #         raw.commit()
+    #     finally:
+    #         raw.close()
+
     def _copy_dataframe_to_table(self, df: pd.DataFrame, table_name: str) -> None:
         if df.empty:
             return
+
         buf = io.StringIO()
         df.to_csv(buf, index=False, header=False)
         buf.seek(0)
 
-        raw = self.engine.raw_connection()          # ← no “with”
+        raw = self.engine.raw_connection()   # get the raw psycopg2 connection
         try:
-            with raw.cursor() as cur:
+            cur = raw.cursor()               # plain cursor, no “with”
+            try:
                 stmt = sql.SQL("COPY {} FROM STDIN WITH CSV").format(
                     sql.Identifier(table_name)
                 )
                 cur.copy_expert(stmt.as_string(cur), buf)
-            raw.commit()
+                raw.commit()
+            finally:
+                cur.close()                  # make sure to close the cursor
         finally:
-            raw.close()
+            raw.close()                      # and the raw connection
