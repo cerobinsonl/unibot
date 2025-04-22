@@ -43,6 +43,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from config import get_engine
 from agents.specialists.sql_agent import SQLAgent
 from agents.specialists.row_factory import RowFactory
+from sqlalchemy.types import Date, DateTime
 from contextlib import closing
 
 logger = logging.getLogger(__name__)
