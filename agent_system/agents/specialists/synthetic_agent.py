@@ -43,6 +43,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from config import get_engine
 from agents.specialists.sql_agent import SQLAgent
 from agents.specialists.row_factory import RowFactory
+from pandas.api.types import is_datetime64_any_dtype, is_datetime64tz_dtype
 from sqlalchemy.types import Date, DateTime
 from contextlib import closing
 
@@ -162,34 +163,33 @@ class SyntheticAgent:
     def _copy_dataframe_to_table(self, df: pd.DataFrame, table_name: str) -> None:
         if df.empty:
             return
-        from pandas.api.types import (
-            is_datetime64_any_dtype, 
-            is_datetime64tz_dtype
-        )
 
-        # 1) Identify date‑string columns by name heuristic:
-        date_cols = [
-            c for c in df.columns
-            if c.lower().endswith('date') or 'date' in c.lower() and df[c].dtype == object
-        ]
+        # 1) Name‑based detection of pure dates vs timestamps
+        date_name_cols = [c for c in df.columns if c.lower().endswith('date')]
+        ts_name_cols   = [c for c in df.columns 
+                        if c.lower().endswith('on')  # e.g. CreatedOn, UpdatedOn
+                            or 'time' in c.lower()]    # e.g. SomeTimeStamp
 
-        # 2) Identify actual datetime columns (with or without tz):
-        ts_cols = [
+        # 2) Also pick up any columns already typed as datetime dtype
+        dtype_ts_cols = [
             c for c in df.columns
             if is_datetime64_any_dtype(df[c]) or is_datetime64tz_dtype(df[c])
         ]
 
-        # 3) Convert
+        # Merge & dedupe
+        ts_cols   = list(dict.fromkeys(ts_name_cols + dtype_ts_cols))
+        date_cols = date_name_cols
+
+        # 3) Convert the values
         for c in date_cols:
             df[c] = pd.to_datetime(df[c], errors='coerce').dt.date
         for c in ts_cols:
             df[c] = pd.to_datetime(df[c], errors='coerce')
 
-
-        # 3) Pass a dtype= mapping so SQLAlchemy knows to bind them as dates/timestamps:
+        # 4) Tell SQLAlchemy what types to bind
         dtype_mapping = {
-            **{c: Date()      for c in date_cols},
-            **{c: DateTime()  for c in ts_cols},
+            **{c: Date()     for c in date_cols},
+            **{c: DateTime() for c in ts_cols},
         }
 
 
