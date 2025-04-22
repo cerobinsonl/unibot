@@ -161,6 +161,9 @@ class SyntheticAgent:
     def _copy_dataframe_to_table(self, df: pd.DataFrame, table_name: str) -> None:
         if df.empty:
             return
+        # wherever you build your df…
+        df['DateOfBirth']     = pd.to_datetime(df['DateOfBirth']).dt.date
+        df['ApplicationDate'] = pd.to_datetime(df['ApplicationDate']).dt.date
 
         try:
             # Use pandas’ built‑in batch INSERT support via SQLAlchemy
