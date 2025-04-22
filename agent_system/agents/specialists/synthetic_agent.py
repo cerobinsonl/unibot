@@ -162,24 +162,34 @@ class SyntheticAgent:
     def _copy_dataframe_to_table(self, df: pd.DataFrame, table_name: str) -> None:
         if df.empty:
             return
-        # wherever you build your df…
-        # inside _copy_dataframe_to_table…
-        # detect columns that look like dates or timestamps 
-        date_cols = [c for c in df.columns 
-                    if df[c].dtype == 'object'  # probably string ISO dates
-                    and c.lower().endswith('date')]
-        ts_candidate = df.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, tz]']).columns.tolist()
-        # convert them
+        from pandas.api.types import (
+            is_datetime64_any_dtype, 
+            is_datetime64tz_dtype
+        )
+
+        # 1) Identify date‑string columns by name heuristic:
+        date_cols = [
+            c for c in df.columns
+            if c.lower().endswith('date') or 'date' in c.lower() and df[c].dtype == object
+        ]
+
+        # 2) Identify actual datetime columns (with or without tz):
+        ts_cols = [
+            c for c in df.columns
+            if is_datetime64_any_dtype(df[c]) or is_datetime64tz_dtype(df[c])
+        ]
+
+        # 3) Convert
         for c in date_cols:
-            df[c] = pd.to_datetime(df[c]).dt.date
-        for c in ts_candidate:
-            df[c] = pd.to_datetime(df[c])
+            df[c] = pd.to_datetime(df[c], errors='coerce').dt.date
+        for c in ts_cols:
+            df[c] = pd.to_datetime(df[c], errors='coerce')
 
 
         # 3) Pass a dtype= mapping so SQLAlchemy knows to bind them as dates/timestamps:
         dtype_mapping = {
             **{c: Date()      for c in date_cols},
-            **{c: DateTime()  for c in ts_candidate},
+            **{c: DateTime()  for c in ts_cols},
         }
 
 
