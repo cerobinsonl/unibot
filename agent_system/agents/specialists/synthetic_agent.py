@@ -163,18 +163,22 @@ class SyntheticAgent:
         if df.empty:
             return
         # wherever you build your df…
-        # If your DF has these columns:
-        date_cols = ['DateOfBirth', 'ApplicationDate']     # DATE columns
-        ts_cols   = ['CreatedOn', 'UpdatedOn']             # TIMESTAMP columns
+        # 1) List out all of your DATE and TIMESTAMP columns:
+        date_cols = ['DateOfBirth', 'ApplicationDate', …]       # all DATE columns
+        ts_cols   = ['CreatedOn', 'UpdatedOn', …]               # all TIMESTAMP columns
 
-        # Turn them into real Python dates / datetimes:
+        # 2) Convert them in pandas to real Python dates/datetimes:
         for c in date_cols:
-            # .dt.date gives pure Python date objects
             df[c] = pd.to_datetime(df[c]).dt.date
-
         for c in ts_cols:
-            # keeps the full datetime
             df[c] = pd.to_datetime(df[c])
+
+        # 3) Pass a dtype= mapping so SQLAlchemy knows to bind them as dates/timestamps:
+        dtype_mapping = {
+            **{c: Date()      for c in date_cols},
+            **{c: DateTime()  for c in ts_cols},
+        }
+
 
         try:
             # Use pandas’ built‑in batch INSERT support via SQLAlchemy
@@ -184,13 +188,7 @@ class SyntheticAgent:
                 if_exists="append",
                 index=False,
                 method="multi",
-                dtype={
-                # ensure SQLAlchemy binds these as DATE/TIMESTAMP, not VARCHAR
-                'DateOfBirth': Date(),
-                'ApplicationDate': Date(),
-                'CreatedOn': DateTime(),
-                'UpdatedOn': DateTime(),
-                }
+                dtype=dtype_mapping,
             )
         except SQLAlchemyError as e:
             # fallback / logging
