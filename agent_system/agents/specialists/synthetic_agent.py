@@ -43,8 +43,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from config import get_engine
 from agents.specialists.sql_agent import SQLAgent
 from agents.specialists.row_factory import RowFactory
-from pandas.api.types import is_datetime64_any_dtype, is_datetime64tz_dtype
-from sqlalchemy.types import Date, DateTime
+from pandas.api.types import (
+    is_datetime64_any_dtype,
+    is_datetime64tz_dtype,
+    is_numeric_dtype
+)
+from sqlalchemy import inspect
+from sqlalchemy.types import Date, DateTime, Numeric
 from contextlib import closing
 
 logger = logging.getLogger(__name__)
@@ -164,37 +169,52 @@ class SyntheticAgent:
         if df.empty:
             return
 
-        # 1) Name‑based detection of pure dates vs timestamps
-        date_name_cols = [c for c in df.columns if c.lower().endswith('date')]
-        ts_name_cols   = [c for c in df.columns 
-                        if c.lower().endswith('on')  # e.g. CreatedOn, UpdatedOn
-                            or 'time' in c.lower()]    # e.g. SomeTimeStamp
-
-        # 2) Also pick up any columns already typed as datetime dtype
-        dtype_ts_cols = [
+        # ————————————————————————————————
+        # 1) Convert pandas columns to the right Python types
+        # ————————————————————————————————
+        # Name‑based date (endswith “Date”) → date
+        date_cols = [c for c in df.columns if c.lower().endswith("date")]
+        # Name‑based timestamp (endswith “On” or contains “time”) → datetime
+        ts_name_cols = [
+            c for c in df.columns
+            if c.lower().endswith("on") or "time" in c.lower()
+        ]
+        # Detect any actual datetime64 (with or without tz)
+        ts_dtype_cols = [
             c for c in df.columns
             if is_datetime64_any_dtype(df[c]) or is_datetime64tz_dtype(df[c])
         ]
+        # Merge & dedupe timestamp list
+        ts_cols = list(dict.fromkeys(ts_name_cols + ts_dtype_cols))
 
-        # Merge & dedupe
-        ts_cols   = list(dict.fromkeys(ts_name_cols + dtype_ts_cols))
-        date_cols = date_name_cols
+        # Numeric columns → float/int
+        num_cols = [c for c in df.columns if is_numeric_dtype(df[c])]
 
-        # 3) Convert the values
+        # Apply conversions, coercing errors into NaT / NaN
         for c in date_cols:
-            df[c] = pd.to_datetime(df[c], errors='coerce').dt.date
+            df[c] = pd.to_datetime(df[c], errors="coerce").dt.date
         for c in ts_cols:
-            df[c] = pd.to_datetime(df[c], errors='coerce')
+            df[c] = pd.to_datetime(df[c], errors="coerce")
+        for c in num_cols:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
 
-        # 4) Tell SQLAlchemy what types to bind
-        dtype_mapping = {
-            **{c: Date()     for c in date_cols},
-            **{c: DateTime() for c in ts_cols},
+        # ————————————————————————————————
+        # 2) Reflect the DB schema for this temp table
+        # ————————————————————————————————
+        inspector = inspect(self.engine)
+        cols_info = inspector.get_columns(table_name)
+
+        # Build a dtype mapping exactly matching your CREATE TABLE
+        # SQLAlchemy will use these types when emitting the COPY/INSERT.
+        dtype_mapping: Dict[str, Any] = {
+            col["name"]: col["type"]
+            for col in cols_info
         }
 
-
         try:
-            # Use pandas’ built‑in batch INSERT support via SQLAlchemy
+            # ————————————————————————————————
+            # 3) Bulk‑load via pandas.to_sql()
+            # ————————————————————————————————
             df.to_sql(
                 table_name,
                 con=self.engine,
