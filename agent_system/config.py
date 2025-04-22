@@ -252,6 +252,8 @@ to actual people or sensitive information.""",
     }
 }
 
+
+
 def get_llm(agent_type: str = "director"):
     """
     Get the appropriate LLM model based on configuration
@@ -276,16 +278,25 @@ def get_llm(agent_type: str = "director"):
             temperature=temperature
         )
     else:
-        # Use Gemini
-        from langchain_google_genai import ChatGoogleGenerativeAI
+        # # Use Gemini
+        # from langchain_google_genai import ChatGoogleGenerativeAI
         
-        # For Gemini models, we need to set convert_system_message_to_human=True
-        # to avoid issues with system messages
-        return ChatGoogleGenerativeAI(
-            api_key=settings.GOOGLE_API_KEY,
-            model=model,
-            temperature=temperature,
-            convert_system_message_to_human=True  # Fix for system message error
+        # # For Gemini models, we need to set convert_system_message_to_human=True
+        # # to avoid issues with system messages
+        # return ChatGoogleGenerativeAI(
+        #     api_key=settings.GOOGLE_API_KEY,
+        #     model=model,
+        #     temperature=temperature,
+        #     convert_system_message_to_human=True  # Fix for system message error
+        # )
+        from langchain_google_vertexai import ChatVertexAI
+        return ChatVertexAI(
+            project="university-chatbot-system",  # Specify your Google Cloud project ID
+            location="us-central1",   # Specify the region for Vertex AI
+            model=model,                         # Use the passed model name
+            temperature=temperature,             # Set the temperature
+            # api_key is NOT used here; authentication relies on ADC (Application Default Credentials)
+            # convert_system_message_to_human is NOT needed/used for ChatVertexAI
         )
     
 
