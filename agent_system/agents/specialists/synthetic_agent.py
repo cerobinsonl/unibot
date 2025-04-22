@@ -163,20 +163,23 @@ class SyntheticAgent:
         if df.empty:
             return
         # wherever you build your df…
-        # 1) List out all of your DATE and TIMESTAMP columns:
-        date_cols = ['DateOfBirth', 'ApplicationDate', …]       # all DATE columns
-        ts_cols   = ['CreatedOn', 'UpdatedOn', …]               # all TIMESTAMP columns
-
-        # 2) Convert them in pandas to real Python dates/datetimes:
+        # inside _copy_dataframe_to_table…
+        # detect columns that look like dates or timestamps 
+        date_cols = [c for c in df.columns 
+                    if df[c].dtype == 'object'  # probably string ISO dates
+                    and c.lower().endswith('date')]
+        ts_candidate = df.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, tz]']).columns.tolist()
+        # convert them
         for c in date_cols:
             df[c] = pd.to_datetime(df[c]).dt.date
-        for c in ts_cols:
+        for c in ts_candidate:
             df[c] = pd.to_datetime(df[c])
+
 
         # 3) Pass a dtype= mapping so SQLAlchemy knows to bind them as dates/timestamps:
         dtype_mapping = {
             **{c: Date()      for c in date_cols},
-            **{c: DateTime()  for c in ts_cols},
+            **{c: DateTime()  for c in ts_candidate},
         }
 
 
